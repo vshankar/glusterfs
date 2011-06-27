@@ -54,7 +54,6 @@ public class GlusterFileSystem extends FileSystem {
 
         /* for quick IO */
         private boolean quickSlaveIO = false;
-        private String  hostname     = null;
 
         /* extended attribute class */
         private GlusterFSXattr xattr = null;
@@ -175,13 +174,6 @@ public class GlusterFileSystem extends FileSystem {
 
                         setConf(conf);
 
-                        /* get hostname of this machine */
-                        try {
-                                InetAddress addr = InetAddress.getLocalHost();
-                                this.hostname = addr.getHostName();
-                        } catch (UnknownHostException uhe) {}
-
-                        System.out.println ("Initialized GlusterFS on host: " + this.hostname);
                 } catch (Exception e) {
                         e.printStackTrace();
                         System.out.println("Unable to initialize GlusterFS");
@@ -359,7 +351,6 @@ public class GlusterFileSystem extends FileSystem {
          * open the file in read mode (internally the file descriptor is an
          * instance of InputStream class).
          *
-         * TODO: uncomment and fix quick.slave.io code
          * if quick read mode is set then read the file by by-passing FUSE
          * if we are on same slave where the file exist
          */
@@ -367,17 +358,17 @@ public class GlusterFileSystem extends FileSystem {
                 Path              absolute          = makeAbsolute(path);
                 File              f                 = new File(absolute.toUri().getPath());
                 FSDataInputStream glusterFileStream = null;
+                String            actualFilePath    = null;
 
                 if (!f.exists())
                         throw new IOException("File " + f.getPath() + " does not exist.");
 
-                /*
-                if (quickSlaveIO && (hostname != null)) {
-                        hfTuple = getPathInfo(f.getPath());
-                        if (hostname.equals(hfTuple[0])) {
-                                f = new File(hfTuple[1]);
-                        }
-                        } */
+                if (quickSlaveIO) {
+                        actualFilePath = xattr.quickIOPossible(f.getPath());
+                        /* short-circuit FUSE by directly reading from the backed FS */
+                        if (actualFilePath != null)
+                                f = new File(actualFilePath);
+                }
 
                 glusterFileStream = new FSDataInputStream(new GlusterFUSEInputStream(f));
                 return glusterFileStream;

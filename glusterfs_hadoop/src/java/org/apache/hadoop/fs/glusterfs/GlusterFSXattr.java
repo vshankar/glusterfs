@@ -37,9 +37,21 @@ import org.apache.hadoop.fs.BlockLocation;
 public class GlusterFSXattr {
 
 	public enum LAYOUT { D, S, R, DS, DR, SR, DSR }
-        public enum CMD { GET_HINTS, GET_REPLICATION, GET_BLOCK_SIZE }
+        public enum CMD { GET_HINTS, GET_REPLICATION, GET_BLOCK_SIZE , CHECK_FOR_QUICK_IO }
 
-        public void GlusterFSXattr() {}
+        private static String hostname;
+
+        public void GlusterFSXattr() {
+                this.hostname = null;
+
+                try {
+                        InetAddress addr = InetAddress.getLocalHost();
+                        this.hostname = addr.getHostName();
+                } catch (UnknownHostException e) {
+                        System.out.println("Unable to get hostname");
+                        e.printStackTrace();
+                }
+        }
 
         public static String brick2host (String brick)
         throws IOException {
@@ -102,6 +114,20 @@ public class GlusterFSXattr {
 
         }
 
+        public static String quickIOPossible (String filename)
+                throws IOException {
+                String                   realpath      = null;
+                HashMap<String, ArrayList<String>> vol = null;
+                HashMap<String, Integer> meta          = new HashMap<String, Integer>();
+
+                vol = execGetFattr(filename, meta, CMD.CHECK_FOR_QUICK_IO);
+
+                if (vol.containsKey("quick-slave-io-file"))
+                        realpath = vol.get("quick-slave-io-file").get(0);
+
+                return realpath;
+        }
+
         public static HashMap<String, ArrayList<String>> execGetFattr (String filename,
                                                                        HashMap<String, Integer> meta,
                                                                        CMD cmd)
@@ -153,7 +179,19 @@ public class GlusterFSXattr {
                                 if (vol.get(key) == null)
                                         vol.put(key, new ArrayList<String>());
 
-                                vol.get(key).add(matcher.group(2));
+                                String brk = matcher.group(2);
+                                if (cmd == CMD.CHECK_FOR_QUICK_IO) {
+                                        String host = brick2host(brk);
+                                        String path = brick2file(brk);
+
+                                        if (host.equals(hostname)) {
+                                                vol.put("quick-slave-io-file", new ArrayList<String>(1));
+                                                vol.get("quick-slave-io-file").add(path);
+                                                break;
+                                        }
+                                }
+
+                                vol.get(key).add(brk);
 
                                 continue;
                         }
