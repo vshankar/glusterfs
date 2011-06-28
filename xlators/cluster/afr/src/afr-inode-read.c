@@ -680,33 +680,33 @@ afr_getxattr_pathinfo_cbk (call_frame_t *frame, void *cookie,
         LOCK (&frame->lock);
                 {
                         callcnt = --local->call_count;
+
+                        if (!dict || (op_ret < 0))
+                                goto out;
+
+                        if (!local->dict)
+                                local->dict = dict_new ();
+
+                        if (local->dict) {
+                                ret = dict_get_str (dict, GF_XATTR_PATHINFO_KEY, &pathinfo);
+                                if (ret)
+                                        goto out;
+
+                                pathinfo = gf_strdup (pathinfo);
+
+                                snprintf (pathinfo_cky, 1024, "%s-%ld", GF_XATTR_PATHINFO_KEY, cky);
+                                ret = dict_set_dynstr (local->dict, pathinfo_cky, pathinfo);
+                                if (ret) {
+                                        gf_log (this->name, GF_LOG_ERROR, "Cannot set pathinfo cookie key");
+                                        goto out;
+                                }
+
+                                local->cont.getxattr.pathinfo_len += strlen (pathinfo) + 1;
+                        }
                 }
+ out:
         UNLOCK (&frame->lock);
 
-        if (!dict || (op_ret < 0))
-                goto out;
-
-        if (!local->dict)
-                local->dict = dict_new ();
-
-        if (local->dict) {
-                ret = dict_get_str (dict, GF_XATTR_PATHINFO_KEY, &pathinfo);
-                if (ret)
-                        goto out;
-
-                pathinfo = gf_strdup (pathinfo);
-
-                snprintf (pathinfo_cky, 1024, "%s-%ld", GF_XATTR_PATHINFO_KEY, cky);
-                ret = dict_set_dynstr (local->dict, pathinfo_cky, pathinfo);
-                if (ret) {
-                        gf_log (this->name, GF_LOG_ERROR, "Cannot set pathinfo cookie key");
-                        goto out;
-                }
-
-                local->cont.getxattr.pathinfo_len += strlen (pathinfo) + 1;
-        }
-
- out:
         if (!callcnt) {
                 if (!local->cont.getxattr.pathinfo_len)
                         goto unwind;
