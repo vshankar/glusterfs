@@ -1,0 +1,422 @@
+/*
+  Copyright (c) 2010 Gluster, Inc. <http://www.gluster.com>
+  This file is part of GlusterFS.
+
+  GlusterFS is GF_FREE software; you can redistribute it and/or modify
+  it under the terms of the GNU Affero General Public License as published
+  by the Free Software Foundation; either version 3 of the License,
+  or (at your option) any later version.
+
+  GlusterFS is distributed in the hope that it will be useful, but
+  WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+  Affero General Public License for more details.
+
+  You should have received a copy of the GNU Affero General Public License
+  along with this program.  If not, see
+  <http://www.gnu.org/licenses/>.
+
+  @author: Venky Shankar (venky@gluster.com)
+
+  Implements the Hadoop FileSystem Interface to allow applications to store
+  files on GlusterFS and run Map/Reduce jobs on the data.
+*/
+
+package org.apache.hadoop.fs.glusterfs;
+
+import java.net.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.io.*;
+import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.Iterator;
+
+import org.apache.hadoop.fs.BlockLocation;
+
+public class GlusterFSXattr {
+
+	public enum LAYOUT { D, S, R, DS, DR, SR, DSR }
+        public enum CMD { GET_HINTS, GET_REPLICATION, GET_BLOCK_SIZE , CHECK_FOR_QUICK_IO }
+
+        private static String hostname;
+
+        public void GlusterFSXattr() {
+                this.hostname = null;
+
+                try {
+                        InetAddress addr = InetAddress.getLocalHost();
+                        this.hostname = addr.getHostName();
+                } catch (UnknownHostException e) {
+                        System.out.println("Unable to get hostname");
+                        e.printStackTrace();
+                }
+        }
+
+        public static String brick2host (String brick)
+        throws IOException {
+                String[] hf = null;
+
+                hf = brick.split(":");
+                if (hf.length != 2) {
+                        System.out.println("brick not of format hostname:path");
+                        throw new IOException("Error getting hostname from brick");
+                }
+
+                return hf[0];
+        }
+
+        public static String brick2file (String brick)
+        throws IOException {
+                String[] hf = null;
+
+                hf = brick.split(":");
+                if (hf.length != 2) {
+                        System.out.println("brick not of format hostname:path");
+                        throw new IOException("Error getting hostname from brick");
+                }
+
+                return hf[1];
+        }
+
+        public static BlockLocation[] getPathInfo (String filename, long start, long len)
+                throws IOException {
+                HashMap<String, ArrayList<String>> vol = null;
+                HashMap<String, Integer> meta          = new HashMap<String, Integer>();
+
+                vol = execGetFattr(filename, meta, CMD.GET_HINTS);
+
+                return getHints(vol, meta, start, len);
+        }
+
+        public static long getBlockSize (String filename)
+                throws IOException {
+                HashMap<String, ArrayList<String>> vol = null;
+                HashMap<String, Integer> meta          = new HashMap<String, Integer>();
+
+                vol = execGetFattr(filename, meta, CMD.GET_BLOCK_SIZE);
+
+                if (!meta.containsKey("block-size"))
+                        return 0;
+
+                return (long) meta.get("block-size");
+
+        }
+
+        public static short getReplication (String filename)
+                throws IOException {
+                HashMap<String, ArrayList<String>> vol = null;
+                HashMap<String, Integer> meta          = new HashMap<String, Integer>();
+
+                vol = execGetFattr(filename, meta, CMD.GET_REPLICATION);
+
+                return (short) getReplicationFromLayout(vol, meta);
+
+        }
+
+        public static String quickIOPossible (String filename)
+                throws IOException {
+                String                   realpath      = null;
+                HashMap<String, ArrayList<String>> vol = null;
+                HashMap<String, Integer> meta          = new HashMap<String, Integer>();
+
+                vol = execGetFattr(filename, meta, CMD.CHECK_FOR_QUICK_IO);
+
+                if (vol.containsKey("quick-slave-io-file"))
+                        realpath = vol.get("quick-slave-io-file").get(0);
+
+                return realpath;
+        }
+
+        public static HashMap<String, ArrayList<String>> execGetFattr (String filename,
+                                                                       HashMap<String, Integer> meta,
+                                                                       CMD cmd)
+                throws IOException {
+                Process        p              = null;
+                BufferedReader brInput        = null;
+                String         s              = null;
+                String         cmdOut         = null;
+                String         getfattrCmd    = null;
+                String         xlator         = null;
+                String         enclosingXl    = null;
+                String         enclosingXlVol = null;
+                String         key            = null;
+                String         layout         = "";
+                int            rcount         = 0;
+                int            scount         = 0;
+                int            dcount         = 0;
+                int            count          = 0;
+
+                HashMap<String, ArrayList<String>> vol = new HashMap<String, ArrayList<String>>();
+
+                getfattrCmd = "sudo getfattr -m . -n trusted.glusterfs.pathinfo " + filename;
+
+                p = Runtime.getRuntime().exec(getfattrCmd);
+                brInput = new BufferedReader(new InputStreamReader(p.getInputStream()));
+
+                cmdOut = "";
+                while ( (s = brInput.readLine()) != null )
+                        cmdOut += s;
+
+                Pattern pattern = Pattern.compile("<(.*?):(.*?)>");
+                Matcher matcher = pattern.matcher(cmdOut);
+
+                s = null;
+                while (matcher.find()) {
+                        xlator = matcher.group(1);
+                        if (xlator.equalsIgnoreCase("posix")) {
+                                if (enclosingXl.equalsIgnoreCase("replicate"))
+                                        count = rcount;
+                                else if (enclosingXl.equalsIgnoreCase("stripe"))
+                                        count = scount;
+                                else if (enclosingXl.equalsIgnoreCase("distribute"))
+                                        count = dcount;
+                                else
+                                        throw new IOException("Unknown Translator: " + enclosingXl);
+
+                                key = enclosingXl + "-" + count;
+
+                                if (vol.get(key) == null)
+                                        vol.put(key, new ArrayList<String>());
+
+                                String brk = matcher.group(2);
+                                if (cmd == CMD.CHECK_FOR_QUICK_IO) {
+                                        String host = brick2host(brk);
+                                        String path = brick2file(brk);
+
+                                        if (host.equals(hostname)) {
+                                                vol.put("quick-slave-io-file", new ArrayList<String>(1));
+                                                vol.get("quick-slave-io-file").add(path);
+                                                break;
+                                        }
+                                }
+
+                                vol.get(key).add(brk);
+
+                                continue;
+                        }
+
+                        enclosingXl = xlator;
+                        enclosingXlVol = matcher.group(2);
+
+                        if (xlator.equalsIgnoreCase("replicate"))
+                                if (rcount++ != 0)
+                                        continue;
+
+                        if (xlator.equalsIgnoreCase("stripe")) {
+                                if (scount++ != 0)
+                                        continue;
+
+
+                                Pattern ps = Pattern.compile("\\[(\\d+)\\]");
+                                Matcher ms = ps.matcher(enclosingXlVol);
+
+                                if (ms.find()) {
+                                        if (((cmd == CMD.GET_BLOCK_SIZE) || (cmd == CMD.GET_HINTS))
+                                            && (meta != null))
+                                            meta.put("block-size", Integer.parseInt(ms.group(1)));
+                                } else
+                                        throw new IOException("Cannot get stripe size");
+                        }
+
+                        if (xlator.equalsIgnoreCase("distribute"))
+                                if (dcount++ != 0)
+                                        continue;
+
+                        layout += xlator.substring(0, 1);
+                }
+
+                if ((dcount == 0) && (scount == 0) && (rcount == 0))
+                        throw new IOException("Cannot get layout");
+
+                if (meta != null) {
+                        meta.put("dcount", dcount);
+                        meta.put("scount", scount);
+                        meta.put("rcount", rcount);
+                }
+
+                vol.put("layout", new ArrayList<String>(1));
+                vol.get("layout").add(layout);
+
+                return vol;
+        }
+
+        static BlockLocation[] getHints (HashMap<String, ArrayList<String>> vol,
+                                         HashMap<String, Integer> meta,
+                                         long start, long len) throws IOException {
+                String            brick         = null;
+                String            key           = null;
+                boolean           done          = false;
+                int               i             = 0;
+                int               counter       = 0;
+                int               stripeSize    = 0;
+                int               currentStripe = 0;
+                long              stripeStart   = 0;
+                long              stripeEnd     = 0;
+                int               nrAllocs      = 0;
+                BlockLocation[] result          = null;
+                ArrayList<String> brickList     = null;
+                ArrayList<String> stripedBricks = null;
+                Iterator<String>  it            = null;
+
+                int dcount, scount, rcount;
+
+                LAYOUT l = LAYOUT.valueOf(vol.get("layout").get(0));
+                dcount = meta.get("dcount");
+                scount = meta.get("scount");
+                rcount = meta.get("rcount");
+
+                switch (l) {
+                case D:
+                        key = "DISTRIBUTE-" + dcount;
+                        brick = vol.get(key).get(0);
+
+                        result = new BlockLocation[1];
+                        result[0] = new BlockLocation(null, new String[] {brick2host(brick)}, start, len);
+                        break;
+
+                case R:
+                case DR:
+                        /* just the name says striped - the volume isn't */
+                        stripedBricks = new ArrayList<String>();
+
+                        for (i = 1; i <= rcount; i++) {
+                                key = "REPLICATE-" + i;
+                                brickList = vol.get(key);
+                                it = brickList.iterator();
+                                while (it.hasNext()) {
+                                        stripedBricks.add(it.next());
+                                }
+                        }
+
+                        nrAllocs = stripedBricks.size();
+                        result = new BlockLocation[nrAllocs];
+
+                        for (i = 0; i < nrAllocs; i++) {
+                                result[i] = new BlockLocation(null, new String[] {brick2host(stripedBricks.get(i))},
+                                                              start, len);
+                        }
+
+                        break;
+
+                case SR:
+                case DSR:
+                        int rsize = 0;
+                        ArrayList<ArrayList<String>> replicas = new ArrayList<ArrayList<String>>();
+
+                        stripedBricks = new ArrayList<String>();
+
+                        for (i = 1; i <= rcount; i++) {
+                                key = "REPLICATE-" + i;
+                                brickList = vol.get(key);
+                                it = brickList.iterator();
+                                replicas.add(i - 1, new ArrayList<String>());
+                                while (it.hasNext()) {
+                                        replicas.get(i - 1).add(it.next());
+                                }
+                        }
+
+                        rsize = replicas.get(0).size();
+                        stripeSize = meta.get("block-size");
+                        nrAllocs = (int) (((len - start) / stripeSize) + 1) * rsize;
+
+                        result = new BlockLocation[nrAllocs];
+
+                        while (stripeStart < len) {
+                                stripeStart = start + currentStripe * stripeSize;
+                                if ((stripeStart > len) || done)
+                                        break;
+
+                                stripeEnd = stripeStart + stripeSize;
+                                if (stripeEnd > len) {
+                                        stripeEnd = len;
+                                        done = true;
+                                }
+
+                                for (i = 0; i < replicas.get(counter).size(); i++) {
+                                        brick = replicas.get(counter).get(i);
+                                        result[(currentStripe * rsize) + i] = new BlockLocation(null,
+                                                                                                new String[] {brick2host(brick)},
+                                                                                                stripeStart, stripeEnd);
+                                }
+
+                                currentStripe++;
+                                counter++;
+                                if (counter >= replicas.size())
+                                        counter = 0;
+                        }
+
+                        break;
+
+                case S:
+                case DS:
+                        if (scount == 0) {
+                                System.out.println ("Got stripe request without stripe count set");
+                                break;
+                        }
+
+                        stripedBricks = new ArrayList<String>();
+                        stripeSize = meta.get("block-size");
+
+                        key = "STRIPE-" + scount;
+                        brickList = vol.get(key);
+                        it = brickList.iterator();
+                        while (it.hasNext()) {
+                                stripedBricks.add(it.next());
+                        }
+
+                        nrAllocs = (int) ((len - start) / stripeSize) + 1;
+                        result = new BlockLocation[nrAllocs];
+
+                        while (stripeStart < len) {
+                                brick = stripedBricks.get(counter);
+                                stripeStart = start + currentStripe * stripeSize;
+                                if ((stripeStart > len) || done)
+                                        break;
+
+                                stripeEnd = stripeStart + stripeSize - 1;
+                                if (stripeEnd > len) {
+                                        stripeEnd = len;
+                                        done = true;
+                                }
+
+                                result[counter] = new BlockLocation(null, new String[] {brick2host(brick)},
+                                                                    stripeStart, stripeEnd);
+
+                                currentStripe++;
+                                counter++;
+                                if (counter >= stripedBricks.size())
+                                        counter = 0;
+                        }
+
+                        break;
+                }
+
+                return result;
+        }
+
+        /* TODO: use meta{dcount,scount,rcount} for checking */
+        public static int getReplicationFromLayout (HashMap<String, ArrayList<String>> vol,
+                                                    HashMap<String, Integer> meta)
+                throws IOException {
+                int replication = 0;
+                LAYOUT l = LAYOUT.valueOf(vol.get("layout").get(0));
+
+                switch (l) {
+                case D:
+                case S:
+                case DS:
+                        replication = 1;
+                        break;
+
+                case R:
+                case DR:
+                case SR:
+                case DSR:
+                        final String key = "REPLICATION-1";
+                        replication = vol.get(key).size();
+                }
+
+                return replication;
+        }
+}
