@@ -41,7 +41,7 @@ public class GlusterFSXattr {
 
         private static String hostname;
 
-        public void GlusterFSXattr() {
+        public GlusterFSXattr() {
                 this.hostname = null;
 
                 try {
