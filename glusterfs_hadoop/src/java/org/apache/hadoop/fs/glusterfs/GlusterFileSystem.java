@@ -99,21 +99,11 @@ public class GlusterFileSystem extends FileSystem {
                 Process        p        = null;
                 String         s        = null;
                 String         mountCmd = null;
-                BufferedReader brInput  = null;
-                BufferedReader brError  = null;
 
-                mountCmd = "mount -t glusterfs " + server + ":" + "/" + volname + " " + mount;
-                System.out.println("Mouting " + mount + " as FUSE mount");
+                mountCmd = "sudo mount -t glusterfs " + server + ":" + "/" + volname + " " + mount;
 
                 try {
                         p = Runtime.getRuntime().exec(mountCmd);
-
-                        brInput = new BufferedReader(new InputStreamReader(p.getInputStream()));
-                        brError = new BufferedReader(new InputStreamReader(p.getErrorStream()));
-
-                        while ( (s = brInput.readLine()) != null ) {
-                                System.out.println(s);
-                        }
 
                         retVal = p.waitFor();
                         if (retVal != 0)
