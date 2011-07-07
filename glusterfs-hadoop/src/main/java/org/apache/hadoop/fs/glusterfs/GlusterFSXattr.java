@@ -250,10 +250,10 @@ public class GlusterFSXattr {
                 int               i             = 0;
                 int               counter       = 0;
                 int               stripeSize    = 0;
-                int               currentStripe = 0;
                 long              stripeStart   = 0;
                 long              stripeEnd     = 0;
                 int               nrAllocs      = 0;
+                int               allocCtr      = 0;
                 BlockLocation[] result          = null;
                 ArrayList<String> brickList     = null;
                 ArrayList<String> stripedBricks = null;
@@ -306,6 +306,9 @@ public class GlusterFSXattr {
 
                         stripedBricks = new ArrayList<String>();
 
+                        if (rcount == 0)
+                                throw new IOException("got replicated volume with replication count 0");
+
                         for (i = 1; i <= rcount; i++) {
                                 key = "REPLICATE-" + i;
                                 brickList = vol.get(key);
@@ -319,15 +322,12 @@ public class GlusterFSXattr {
                         rsize = replicas.get(0).size();
                         stripeSize = meta.get("block-size");
                         nrAllocs = (int) (((len - start) / stripeSize) + 1) * rsize;
-
                         result = new BlockLocation[nrAllocs];
 
-                        while (stripeStart < len) {
-                                stripeStart = start + currentStripe * stripeSize;
-                                if ((stripeStart > len) || done)
-                                        break;
+                        stripeStart = start;
 
-                                stripeEnd = stripeStart + stripeSize;
+                        while ((stripeStart < len) && !done) {
+                                stripeEnd = (stripeStart - (stripeStart % stripeSize)) + stripeSize - 1;
                                 if (stripeEnd > len) {
                                         stripeEnd = len;
                                         done = true;
@@ -335,13 +335,16 @@ public class GlusterFSXattr {
 
                                 for (i = 0; i < replicas.get(counter).size(); i++) {
                                         brick = replicas.get(counter).get(i);
-                                        result[(currentStripe * rsize) + i] = new BlockLocation(null,
-                                                                                                new String[] {brick2host(brick)},
-                                                                                                stripeStart, stripeEnd);
+                                        result[(allocCtr * rsize) + i] = new BlockLocation(null,
+                                                                                           new String[] {brick2host(brick)},
+                                                                                           stripeStart, stripeEnd);
                                 }
 
-                                currentStripe++;
+                                stripeStart = stripeEnd + 1;
+
+                                allocCtr++;
                                 counter++;
+
                                 if (counter >= replicas.size())
                                         counter = 0;
                         }
@@ -350,10 +353,8 @@ public class GlusterFSXattr {
 
                 case S:
                 case DS:
-                        if (scount == 0) {
-                                System.out.println ("Got stripe request without stripe count set");
-                                break;
-                        }
+                        if (scount == 0)
+                                throw new IOException("got striped volume with stripe count 0");
 
                         stripedBricks = new ArrayList<String>();
                         stripeSize = meta.get("block-size");
@@ -368,23 +369,25 @@ public class GlusterFSXattr {
                         nrAllocs = (int) ((len - start) / stripeSize) + 1;
                         result = new BlockLocation[nrAllocs];
 
-                        while (stripeStart < len) {
-                                brick = stripedBricks.get(counter);
-                                stripeStart = start + currentStripe * stripeSize;
-                                if ((stripeStart > len) || done)
-                                        break;
+                        stripeStart = start;
 
-                                stripeEnd = stripeStart + stripeSize - 1;
+                        while ((stripeStart < len) && !done) {
+                                brick = stripedBricks.get(counter);
+
+                                stripeEnd = (stripeStart - (stripeStart % stripeSize)) + stripeSize - 1;
                                 if (stripeEnd > len) {
                                         stripeEnd = len;
                                         done = true;
                                 }
 
-                                result[counter] = new BlockLocation(null, new String[] {brick2host(brick)},
+                                result[allocCtr] = new BlockLocation(null, new String[] {brick2host(brick)},
                                                                     stripeStart, stripeEnd);
 
-                                currentStripe++;
+                                stripeStart = stripeEnd + 1;
+
                                 counter++;
+                                allocCtr++;
+
                                 if (counter >= stripedBricks.size())
                                         counter = 0;
                         }
