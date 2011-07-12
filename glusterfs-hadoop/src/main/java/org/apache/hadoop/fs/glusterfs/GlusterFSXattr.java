@@ -29,6 +29,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.io.*;
 import java.util.HashMap;
+import java.util.TreeMap;
 import java.util.ArrayList;
 import java.util.Iterator;
 
@@ -37,21 +38,11 @@ import org.apache.hadoop.fs.BlockLocation;
 public class GlusterFSXattr {
 
 	public enum LAYOUT { D, S, R, DS, DR, SR, DSR }
-        public enum CMD { GET_HINTS, GET_REPLICATION, GET_BLOCK_SIZE , CHECK_FOR_QUICK_IO }
+        public enum CMD { GET_HINTS, GET_REPLICATION, GET_BLOCK_SIZE, CHECK_FOR_QUICK_IO }
 
         private static String hostname;
 
-        public GlusterFSXattr() {
-                this.hostname = null;
-
-                try {
-                        InetAddress addr = InetAddress.getLocalHost();
-                        this.hostname = addr.getHostName();
-                } catch (UnknownHostException e) {
-                        System.out.println("Unable to get hostname");
-                        e.printStackTrace();
-                }
-        }
+        public GlusterFSXattr() { }
 
         public static String brick2host (String brick)
         throws IOException {
@@ -86,7 +77,7 @@ public class GlusterFSXattr {
 
                 vol = execGetFattr(filename, meta, CMD.GET_HINTS);
 
-                return getHints(vol, meta, start, len);
+                return getHints(vol, meta, start, len, null);
         }
 
         public static long getBlockSize (String filename)
@@ -114,18 +105,22 @@ public class GlusterFSXattr {
 
         }
 
-        public static String quickIOPossible (String filename)
+        public static TreeMap<Integer, GlusterFSBrickClass> quickIOPossible (String filename, long start,
+                                                                             long len)
                 throws IOException {
                 String                   realpath      = null;
                 HashMap<String, ArrayList<String>> vol = null;
                 HashMap<String, Integer> meta          = new HashMap<String, Integer>();
+                TreeMap<Integer, GlusterFSBrickClass> hnts = new TreeMap<Integer, GlusterFSBrickClass>();
 
-                vol = execGetFattr(filename, meta, CMD.CHECK_FOR_QUICK_IO);
+                vol = execGetFattr(filename, meta, CMD.GET_HINTS);
+                getHints(vol, meta, start, len, hnts);
 
-                if (vol.containsKey("quick-slave-io-file"))
-                        realpath = vol.get("quick-slave-io-file").get(0);
+                if (hnts.size() == 0) 
+                        return null; // BOOM !!
 
-                return realpath;
+                // DEBUG - dump hnts here
+                return hnts;
         }
 
         public static HashMap<String, ArrayList<String>> execGetFattr (String filename,
@@ -179,19 +174,7 @@ public class GlusterFSXattr {
                                 if (vol.get(key) == null)
                                         vol.put(key, new ArrayList<String>());
 
-                                String brk = matcher.group(2);
-                                if (cmd == CMD.CHECK_FOR_QUICK_IO) {
-                                        String host = brick2host(brk);
-                                        String path = brick2file(brk);
-
-                                        if (host.equals(hostname)) {
-                                                vol.put("quick-slave-io-file", new ArrayList<String>(1));
-                                                vol.get("quick-slave-io-file").add(path);
-                                                break;
-                                        }
-                                }
-
-                                vol.get(key).add(brk);
+                                vol.get(key).add(matcher.group(2));
 
                                 continue;
                         }
@@ -243,9 +226,12 @@ public class GlusterFSXattr {
 
         static BlockLocation[] getHints (HashMap<String, ArrayList<String>> vol,
                                          HashMap<String, Integer> meta,
-                                         long start, long len) throws IOException {
+                                         long start, long len,
+                                         TreeMap<Integer, GlusterFSBrickClass> hnts)
+                throws IOException {
                 String            brick         = null;
                 String            key           = null;
+                String            openKey       = null;
                 boolean           done          = false;
                 int               i             = 0;
                 int               counter       = 0;
@@ -271,13 +257,17 @@ public class GlusterFSXattr {
                         key = "DISTRIBUTE-" + dcount;
                         brick = vol.get(key).get(0);
 
-                        result = new BlockLocation[1];
-                        result[0] = new BlockLocation(null, new String[] {brick2host(brick)}, start, len);
+                        if (hnts == null) {
+                                result = new BlockLocation[1];
+                                result[0] = new BlockLocation(null, new String[] {brick2host(brick)}, start, len);
+                        } else
+                                hnts.put(0, new GlusterFSBrickClass(brick, start, len, false, -1, -1, -1));
+                                
                         break;
 
                 case R:
                 case DR:
-                        /* just the name says striped - the volume isn't */
+                        /* just the name says it's striped - the volume isn't */
                         stripedBricks = new ArrayList<String>();
 
                         for (i = 1; i <= rcount; i++) {
@@ -290,11 +280,15 @@ public class GlusterFSXattr {
                         }
 
                         nrAllocs = stripedBricks.size();
-                        result = new BlockLocation[nrAllocs];
+                        if (hnts == null)
+                                result = new BlockLocation[nrAllocs];
 
                         for (i = 0; i < nrAllocs; i++) {
-                                result[i] = new BlockLocation(null, new String[] {brick2host(stripedBricks.get(i))},
-                                                              start, len);
+                                if (hnts == null)
+                                        result[i] = new BlockLocation(null, new String[] {brick2host(stripedBricks.get(i))},
+                                                                      start, len);
+                                else
+                                        hnts.put(i, new GlusterFSBrickClass(stripedBricks.get(i), start, len, false, -1, -1, -1));
                         }
 
                         break;
@@ -321,23 +315,34 @@ public class GlusterFSXattr {
 
                         rsize = replicas.get(0).size();
                         stripeSize = meta.get("block-size");
+
                         nrAllocs = (int) (((len - start) / stripeSize) + 1) * rsize;
-                        result = new BlockLocation[nrAllocs];
+                        if (hnts == null)
+                                result = new BlockLocation[nrAllocs];
 
                         stripeStart = start;
 
+                        key = null;
+                        int currAlloc = 0;
                         while ((stripeStart < len) && !done) {
                                 stripeEnd = (stripeStart - (stripeStart % stripeSize)) + stripeSize - 1;
-                                if (stripeEnd > len) {
-                                        stripeEnd = len;
+                                if (stripeEnd > start + len) {
+                                        stripeEnd = start + len - 1;
                                         done = true;
                                 }
 
                                 for (i = 0; i < replicas.get(counter).size(); i++) {
                                         brick = replicas.get(counter).get(i);
-                                        result[(allocCtr * rsize) + i] = new BlockLocation(null,
-                                                                                           new String[] {brick2host(brick)},
-                                                                                           stripeStart, stripeEnd);
+                                        currAlloc = (allocCtr * rsize) + i;
+                                        if (hnts == null)
+                                                result[currAlloc] = new BlockLocation(null,
+                                                                                      new String[] {brick2host(brick)},
+                                                                                      stripeStart, (stripeEnd - stripeStart));
+                                        else
+                                                if (currAlloc <= (rsize * rcount))
+                                                        hnts.put(currAlloc, new GlusterFSBrickClass(brick, stripeStart,
+                                                                                                    (stripeEnd - stripeStart),
+                                                                                                    true, stripeSize, rcount, rsize));
                                 }
 
                                 stripeStart = stripeEnd + 1;
@@ -367,21 +372,28 @@ public class GlusterFSXattr {
                         }
 
                         nrAllocs = (int) ((len - start) / stripeSize) + 1;
-                        result = new BlockLocation[nrAllocs];
+                        if (hnts == null)
+                                result = new BlockLocation[nrAllocs];
 
                         stripeStart = start;
 
+                        key = null;
                         while ((stripeStart < len) && !done) {
                                 brick = stripedBricks.get(counter);
 
                                 stripeEnd = (stripeStart - (stripeStart % stripeSize)) + stripeSize - 1;
-                                if (stripeEnd > len) {
-                                        stripeEnd = len;
+                                if (stripeEnd > start + len) {
+                                        stripeEnd = start + len - 1;
                                         done = true;
                                 }
 
-                                result[allocCtr] = new BlockLocation(null, new String[] {brick2host(brick)},
-                                                                    stripeStart, stripeEnd);
+                                if (hnts == null)
+                                        result[allocCtr] = new BlockLocation(null, new String[] {brick2host(brick)},
+                                                                             stripeStart, (stripeEnd - stripeStart));
+                                else
+                                        if (allocCtr <= stripedBricks.size())
+                                                hnts.put(allocCtr, new GlusterFSBrickClass(brick, stripeStart, (stripeEnd - stripeStart),
+                                                                                           true, stripeSize, stripedBricks.size(), -1));
 
                                 stripeStart = stripeEnd + 1;
 

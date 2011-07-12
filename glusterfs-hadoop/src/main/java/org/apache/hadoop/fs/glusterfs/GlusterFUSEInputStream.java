@@ -22,21 +22,71 @@
 package org.apache.hadoop.fs.glusterfs;
 
 import java.io.*;
+import java.util.TreeMap;
 
 import org.apache.hadoop.fs.FSInputStream;
 import org.apache.hadoop.fs.FileSystem;
 
-public class GlusterFUSEInputStream extends FSInputStream {
-        File                  f;
-        private long          pos;
-        private boolean       closed;
-        InputStream           fuseInputStream;
 
-        public GlusterFUSEInputStream (File f) throws IOException {
+public class GlusterFUSEInputStream extends FSInputStream {
+        File                                  f;
+        boolean                               lastActive;
+        long                                  pos;
+        boolean                               closed;
+        String                                thisHost;
+        TreeMap<Integer, GlusterFSBrickClass> hnts;
+        InputStream                           fuseInputStream;
+        InputStream                           fsInputStream;
+        GlusterFSBrickClass thisBrick;
+        int nodeLocation;
+
+        public GlusterFUSEInputStream (File f, TreeMap<Integer, GlusterFSBrickClass> hnts,
+                                       String hostname) throws IOException {
                 this.f = f;
                 this.pos = 0;
                 this.closed = false;
+                this.hnts = hnts;
+                this.thisHost = hostname;
+                this.fsInputStream = null;
                 this.fuseInputStream = new FileInputStream(f.getPath());
+
+                System.out.println("Adding brick for file: " + f.getPath());
+
+                this.lastActive = true; // true == FUSE, false == backed file
+
+                String directFilePath = null;
+                if (this.hnts != null) {
+                        directFilePath = findLocalFile(f.getPath(), this.hnts);
+                        if (directFilePath != null) {
+                                this.fsInputStream = new FileInputStream(directFilePath);
+                                this.lastActive = !this.lastActive;
+                        }
+                        else
+                                System.out.println("Using FUSE path for file IO");
+                }
+        }
+
+        public String findLocalFile (String path, TreeMap<Integer, GlusterFSBrickClass> hnts) {
+                int i = 0;
+                String actFilePath = null;
+                GlusterFSBrickClass gfsBrick = null;
+
+                gfsBrick = hnts.get(0);
+
+                /* do a linear search for the matching host not worrying
+                   about file stripes */
+                for (i = 0; i < hnts.size(); i++) {
+                        gfsBrick = hnts.get(i);
+                        actFilePath = gfsBrick.brickIsLocal(this.thisHost);
+                        if (actFilePath != null) {
+                                System.out.println("Actual file: " + actFilePath + " Node location in tree: " + i);
+                                this.thisBrick = gfsBrick;
+                                this.nodeLocation = i;
+                                break;
+                        }
+                }
+
+                return actFilePath;
         }
 
         public long getPos () throws IOException {
@@ -44,25 +94,60 @@ public class GlusterFUSEInputStream extends FSInputStream {
         }
 
         public synchronized int available () throws IOException {
+                System.out.println("available called: " + ((f.length()) - pos));
                 return (int) ((f.length()) - pos);
         }
 
         public void seek (long pos) throws IOException {
                 System.out.println("Seeking to position " + pos);
                 fuseInputStream.skip(pos);
+                if (fsInputStream != null)
+                        fsInputStream.skip(pos);
         }
 
         public boolean seekToNewSource (long pos) throws IOException {
                 return false;
         }
 
+        public InputStream chooseStream (long start, int[] nlen) {
+                GlusterFSBrickClass gfsBrick = null;
+                InputStream in = fuseInputStream;
+                lastActive = true;
+
+                if ((hnts != null) && (fsInputStream != null)) {
+                        gfsBrick = hnts.get(0);
+                        if (!gfsBrick.isChunked()) {
+                                in = fsInputStream;
+                                lastActive = false;
+                        } else {
+                                // find the current location in the tree and the amount of data it can serve
+                                int[] nodeInTree = thisBrick.getBrickNumberInTree(start, nlen[0]);
+                                System.out.println("start len: " + start + " end len: " + nlen[0] + " node location " + nodeLocation);
+                                System.out.println("start node " + nodeInTree[0] + " end node " + nodeInTree[1] + " readable len " + nodeInTree[2]);
+
+                                // does this node hold the byte ranges we have been requested for ?
+                                if ((nodeInTree[2] != 0) && thisBrick.brickHasFilePart(nodeInTree[0], nodeLocation)) {
+                                        in = fsInputStream;
+                                        nlen[0] = nodeInTree[2]; // the amount of data that can be read from the stripe
+                                        lastActive = false;
+                                }
+                        }
+                }
+
+                return in;
+        }
+
         public synchronized int read () throws IOException {
                 int byteRead = 0;
+                InputStream in = null;
 
                 if (closed)
                         throw new IOException("Stream Closed.");
 
-                byteRead = fuseInputStream.read();
+                int[] nlen = { 1 };
+
+                in = chooseStream(getPos(), nlen);
+                byteRead = in.read();
                 if (byteRead >= 0)
                         pos++;
 
@@ -71,17 +156,32 @@ public class GlusterFUSEInputStream extends FSInputStream {
 
         public synchronized int read (byte buff[], int off, int len) throws
                 IOException {
-
                 int result = 0;
+                InputStream in = null;
 
                 if (closed)
                         throw new IOException("Stream Closed.");
 
-                result = fuseInputStream.read(buff, off, len);
-                if (result > 0)
+                int[] nlen = {len}; // hack to make len mutable
+                in = chooseStream(pos+off, nlen);
+
+                System.out.println("reading from " + (pos + off) + " length " + nlen[0] + " from stream " +
+                                   ((this.lastActive) ? "FUSE" : "FS"));
+
+                result = in.read(buff, off, nlen[0]);
+                if (result > 0) {
+                        syncStreams(result);
+                        System.out.println("read " + result + " bytes");
                         pos += result;
+                }
 
                 return result;
+        }
+
+        public void syncStreams (int readBytes) throws IOException {
+                // when we switch streams we better read from the right offset
+                if ((hnts != null) && (fsInputStream != null) && !this.lastActive)
+                        fuseInputStream.skip(readBytes);
         }
 
         public synchronized void close () throws IOException {
@@ -89,6 +189,8 @@ public class GlusterFUSEInputStream extends FSInputStream {
                         throw new IOException("Stream closed.");
 
                 super.close();
+                if (fsInputStream != null)
+                        fsInputStream.close();
                 fuseInputStream.close();
 
                 closed = true;

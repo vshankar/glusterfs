@@ -40,6 +40,8 @@ import org.apache.hadoop.fs.BlockLocation;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.util.Progressable;
 
+import java.util.TreeMap;
+
 /*
  * This package provides interface for hadoop jobs (incl. Map/Reduce)
  * to access files in GlusterFS backed file system via FUSE mount
@@ -57,6 +59,9 @@ public class GlusterFileSystem extends FileSystem {
 
         /* extended attribute class */
         private GlusterFSXattr xattr = null;
+
+        /* hostname of this machine */
+        private static String hostname;
 
         public GlusterFileSystem () {
 
@@ -161,6 +166,9 @@ public class GlusterFileSystem extends FileSystem {
                         this.uri = URI.create(uri.getScheme() + "://" + uri.getAuthority());
 
                         this.xattr = new GlusterFSXattr();
+
+                        InetAddress addr = InetAddress.getLocalHost();
+                        this.hostname = addr.getHostName();
 
                         setConf(conf);
 
@@ -348,19 +356,15 @@ public class GlusterFileSystem extends FileSystem {
                 Path              absolute          = makeAbsolute(path);
                 File              f                 = new File(absolute.toUri().getPath());
                 FSDataInputStream glusterFileStream = null;
-                String            actualFilePath    = null;
+                TreeMap<Integer, GlusterFSBrickClass> hnts = null;
 
                 if (!f.exists())
                         throw new IOException("File " + f.getPath() + " does not exist.");
 
-                if (quickSlaveIO) {
-                        actualFilePath = xattr.quickIOPossible(f.getPath());
-                        /* short-circuit FUSE by directly reading from the backed FS */
-                        if (actualFilePath != null)
-                                f = new File(actualFilePath);
-                }
+                if (quickSlaveIO)
+                        hnts = xattr.quickIOPossible(f.getPath(), 0, f.length());
 
-                glusterFileStream = new FSDataInputStream(new GlusterFUSEInputStream(f));
+                glusterFileStream = new FSDataInputStream(new GlusterFUSEInputStream(f, hnts, hostname));
                 return glusterFileStream;
         }
 
