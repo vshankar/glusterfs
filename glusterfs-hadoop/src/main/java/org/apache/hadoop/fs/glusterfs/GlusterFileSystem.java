@@ -71,32 +71,6 @@ public class GlusterFileSystem extends FileSystem {
                 return uri;
         }
 
-        /** dtor */
-        protected void finalize () throws IOException, InterruptedException {
-                Process        p         = null;
-                String         s         = null;
-                String         umountCmd = null;
-                BufferedReader brInput   = null;
-
-                if (!this.mounted)
-                        return;
-
-                // unmount the FUSE mount
-                System.out.println("Unmounting: " + glusterMount);
-                umountCmd = "umount " + glusterMount;
-
-                try {
-                        p = Runtime.getRuntime().exec(umountCmd);
-                        brInput = new BufferedReader(new InputStreamReader(p.getInputStream()));
-
-                        while ( (s = brInput.readLine()) != null ) {
-                                System.out.println(s);
-                        }
-                } catch (IOException e) {
-                        e.printStackTrace();
-                }
-        }
-
         public boolean FUSEMount (String volname, String server, String mount)
                 throws IOException, InterruptedException  {
                 boolean        ret      = true;

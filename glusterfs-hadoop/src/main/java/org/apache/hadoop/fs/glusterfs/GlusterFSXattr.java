@@ -231,7 +231,6 @@ public class GlusterFSXattr {
                 throws IOException {
                 String            brick         = null;
                 String            key           = null;
-                String            openKey       = null;
                 boolean           done          = false;
                 int               i             = 0;
                 int               counter       = 0;
@@ -245,6 +244,8 @@ public class GlusterFSXattr {
                 ArrayList<String> stripedBricks = null;
                 Iterator<String>  it            = null;
 
+                String[] blks = null;
+                GlusterFSBrickRepl[] repl = null;
                 int dcount, scount, rcount;
 
                 LAYOUT l = LAYOUT.valueOf(vol.get("layout").get(0));
@@ -280,16 +281,20 @@ public class GlusterFSXattr {
                         }
 
                         nrAllocs = stripedBricks.size();
-                        if (hnts == null)
-                                result = new BlockLocation[nrAllocs];
+                        if (hnts == null) {
+                                result = new BlockLocation[1];
+                                blks = new String[nrAllocs];
+                        }
 
                         for (i = 0; i < nrAllocs; i++) {
                                 if (hnts == null)
-                                        result[i] = new BlockLocation(null, new String[] {brick2host(stripedBricks.get(i))},
-                                                                      start, len);
+                                        blks[i] = brick2host(stripedBricks.get(i));
                                 else
                                         hnts.put(i, new GlusterFSBrickClass(stripedBricks.get(i), start, len, false, -1, -1, -1));
                         }
+
+                        if (hnts == null)
+                                result[0] = new BlockLocation(null, blks, start, len);
 
                         break;
 
@@ -316,10 +321,14 @@ public class GlusterFSXattr {
                         rsize = replicas.get(0).size();
                         stripeSize = meta.get("block-size");
 
-                        nrAllocs = (int) (((len - start) / stripeSize) + 1) * rsize;
-                        if (hnts == null)
+                        nrAllocs = (int) (((len - start) / stripeSize) + 1);
+                        if (hnts == null) {
                                 result = new BlockLocation[nrAllocs];
+                                repl = new GlusterFSBrickRepl[nrAllocs];
+                        }
 
+                        // starting stripe position
+                        counter = (int) ((start / stripeSize) % rcount);
                         stripeStart = start;
 
                         key = null;
@@ -331,13 +340,15 @@ public class GlusterFSXattr {
                                         done = true;
                                 }
 
-                                for (i = 0; i < replicas.get(counter).size(); i++) {
+                                if (hnts == null)
+                                        repl[allocCtr] = new GlusterFSBrickRepl(rsize, stripeStart, (stripeEnd - stripeStart));
+
+                                for (i = 0; i < rsize; i++) {
                                         brick = replicas.get(counter).get(i);
                                         currAlloc = (allocCtr * rsize) + i;
+
                                         if (hnts == null)
-                                                result[currAlloc] = new BlockLocation(null,
-                                                                                      new String[] {brick2host(brick)},
-                                                                                      stripeStart, (stripeEnd - stripeStart));
+                                                repl[allocCtr].addHost(brick2host(brick));
                                         else
                                                 if (currAlloc <= (rsize * rcount))
                                                         hnts.put(currAlloc, new GlusterFSBrickClass(brick, stripeStart,
@@ -353,6 +364,9 @@ public class GlusterFSXattr {
                                 if (counter >= replicas.size())
                                         counter = 0;
                         }
+
+                        for (int k = 0; k < nrAllocs; k++)
+                                result[k] = new BlockLocation(null, repl[k].getReplHosts(), repl[k].getStartLen(), repl[k].getOffLen());
 
                         break;
 
@@ -375,6 +389,8 @@ public class GlusterFSXattr {
                         if (hnts == null)
                                 result = new BlockLocation[nrAllocs];
 
+                        // starting stripe position
+                        counter = (int) ((start / stripeSize) % stripedBricks.size());
                         stripeStart = start;
 
                         key = null;

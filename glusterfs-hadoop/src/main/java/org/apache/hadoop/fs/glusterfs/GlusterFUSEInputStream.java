@@ -50,8 +50,6 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 this.fsInputStream = null;
                 this.fuseInputStream = new FileInputStream(f.getPath());
 
-                System.out.println("Adding brick for file: " + f.getPath());
-
                 this.lastActive = true; // true == FUSE, false == backed file
 
                 String directFilePath = null;
@@ -61,8 +59,6 @@ public class GlusterFUSEInputStream extends FSInputStream {
                                 this.fsInputStream = new FileInputStream(directFilePath);
                                 this.lastActive = !this.lastActive;
                         }
-                        else
-                                System.out.println("Using FUSE path for file IO");
                 }
         }
 
@@ -79,7 +75,6 @@ public class GlusterFUSEInputStream extends FSInputStream {
                         gfsBrick = hnts.get(i);
                         actFilePath = gfsBrick.brickIsLocal(this.thisHost);
                         if (actFilePath != null) {
-                                System.out.println("Actual file: " + actFilePath + " Node location in tree: " + i);
                                 this.thisBrick = gfsBrick;
                                 this.nodeLocation = i;
                                 break;
@@ -94,12 +89,10 @@ public class GlusterFUSEInputStream extends FSInputStream {
         }
 
         public synchronized int available () throws IOException {
-                System.out.println("available called: " + ((f.length()) - pos));
                 return (int) ((f.length()) - pos);
         }
 
         public void seek (long pos) throws IOException {
-                System.out.println("Seeking to position " + pos);
                 fuseInputStream.skip(pos);
                 if (fsInputStream != null)
                         fsInputStream.skip(pos);
@@ -122,8 +115,6 @@ public class GlusterFUSEInputStream extends FSInputStream {
                         } else {
                                 // find the current location in the tree and the amount of data it can serve
                                 int[] nodeInTree = thisBrick.getBrickNumberInTree(start, nlen[0]);
-                                System.out.println("start len: " + start + " end len: " + nlen[0] + " node location " + nodeLocation);
-                                System.out.println("start node " + nodeInTree[0] + " end node " + nodeInTree[1] + " readable len " + nodeInTree[2]);
 
                                 // does this node hold the byte ranges we have been requested for ?
                                 if ((nodeInTree[2] != 0) && thisBrick.brickHasFilePart(nodeInTree[0], nodeLocation)) {
@@ -148,8 +139,10 @@ public class GlusterFUSEInputStream extends FSInputStream {
 
                 in = chooseStream(getPos(), nlen);
                 byteRead = in.read();
-                if (byteRead >= 0)
+                if (byteRead >= 0) {
+                        syncStreams(byteRead);
                         pos++;
+                }
 
                 return byteRead;
         }
@@ -165,13 +158,9 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 int[] nlen = {len}; // hack to make len mutable
                 in = chooseStream(pos+off, nlen);
 
-                System.out.println("reading from " + (pos + off) + " length " + nlen[0] + " from stream " +
-                                   ((this.lastActive) ? "FUSE" : "FS"));
-
                 result = in.read(buff, off, nlen[0]);
                 if (result > 0) {
                         syncStreams(result);
-                        System.out.println("read " + result + " bytes");
                         pos += result;
                 }
 
@@ -179,9 +168,13 @@ public class GlusterFUSEInputStream extends FSInputStream {
         }
 
         public void syncStreams (int readBytes) throws IOException {
-                // when we switch streams we better read from the right offset
-                if ((hnts != null) && (fsInputStream != null) && !this.lastActive)
-                        fuseInputStream.skip(readBytes);
+                // if we switch streams we better read from the right offset
+
+                if ((hnts != null) && (hnts.get(0).isChunked()) && (fsInputStream != null))
+                        if (!this.lastActive)
+                                fuseInputStream.skip(readBytes);
+                        else
+                                fsInputStream.skip(readBytes);
         }
 
         public synchronized void close () throws IOException {

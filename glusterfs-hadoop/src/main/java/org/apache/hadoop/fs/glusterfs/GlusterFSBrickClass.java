@@ -45,8 +45,6 @@ public class GlusterFSBrickClass {
                 this.stripeSize = stripeSize;
                 this.nrStripes = nrStripes;
                 this.switchCount = switchCount;
-
-                System.out.println("Adding hnt: " + brick + " start " + start + " len " + (start + len));
         }
 
         public boolean isChunked () {
@@ -93,10 +91,8 @@ public class GlusterFSBrickClass {
                 String[] hf = null;
 
                 hf = brick.split(":");
-                if (hf.length != 2) {
-                        System.out.println("brick not of format hostname:path");
+                if (hf.length != 2)
                         throw new IOException("Error getting hostname from brick");
-                }
 
                 return hf[0];
         }
@@ -106,10 +102,8 @@ public class GlusterFSBrickClass {
                 String[] hf = null;
 
                 hf = brick.split(":");
-                if (hf.length != 2) {
-                        System.out.println("brick not of format hostname:path");
+                if (hf.length != 2)
                         throw new IOException("Error getting hostname from brick");
-                }
 
                 return hf[1];
         }
