@@ -365,8 +365,9 @@ public class GlusterFSXattr {
                                         counter = 0;
                         }
 
-                        for (int k = 0; k < nrAllocs; k++)
-                                result[k] = new BlockLocation(null, repl[k].getReplHosts(), repl[k].getStartLen(), repl[k].getOffLen());
+                        if (hnts == null)
+                                for (int k = 0; k < nrAllocs; k++)
+                                        result[k] = new BlockLocation(null, repl[k].getReplHosts(), repl[k].getStartLen(), repl[k].getOffLen());
 
                         break;
 
