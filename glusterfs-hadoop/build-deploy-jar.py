@@ -7,7 +7,7 @@ import shutil
 import subprocess, shlex
 
 def usage():
-    print "usage: python deploy-jar.py [-b] -d <hadoop-home>"
+    print "usage: python build-deploy-jar.py [-b/--build] -d/--dir <hadoop-home>"
 
 def addSlash(s):
     if not (s[-1] == '/'):
@@ -115,14 +115,25 @@ def deployInMaster(jar, confdir, libdir):
 if __name__ == '__main__':
     opt = args = []
     try:
-        opt, args = getopt.getopt(sys.argv[1:], "bd:");
+        opt, args = getopt.getopt(sys.argv[1:], "bd:", ["build", "dir="]);
     except getopt.GetoptError, err:
+        print str(err)
         usage()
         sys.exit(1)
 
-    opt = dict(opt)
+    needbuild = hadoop_dir = None
 
-    if opt.get('-b') is not None:
+    for k, v in opt:
+        if k in ("-b", "--build"):
+            needbuild = True
+        elif k in ("-d", "--dir"):
+            hadoop_dir = v
+        else:
+            assert False, "unhandled option"
+
+    assert not hadoop_dir == None, "hadoop directory missing"
+
+    if needbuild:
         jar = build_jar()
         if jar == None:
             sys.exit(1)
@@ -136,7 +147,7 @@ if __name__ == '__main__':
     print "*** Deploying %s *** " % (jar)
 
     # copy jar to local hadoop distribution (master)
-    hadoop_home = addSlash(opt['-d'])
+    hadoop_home = addSlash(hadoop_dir)
     if not (os.path.exists(hadoop_home) and os.path.isdir(hadoop_home)):
         print "path " + hadoop_home + " does not exist or is not adiretory";
         sys.exit(1);
