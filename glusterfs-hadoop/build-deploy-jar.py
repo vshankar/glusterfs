@@ -7,7 +7,7 @@ import shutil
 import subprocess, shlex
 
 def usage():
-    print "usage: python build-deploy-jar.py [-b/--build] -d/--dir <hadoop-home>"
+    print "usage: python build-deploy-jar.py [-b/--build] -d/--dir <hadoop-home> [-c/--core] [-m/--mapred]"
 
 def addSlash(s):
     if not (s[-1] == '/'):
@@ -73,29 +73,40 @@ def build_jar():
     latestJar = getLatestJar(targetdir)
     return latestJar
 
-def rcopy(jar, host, libdir):
+def rcopy(f, host, libdir):
     print "   * doing remote copy to host %s" % (host)
-    scpCmd = "scp %s %s:%s" % (jar, host, libdir)
+    scpCmd = "scp %s %s:%s" % (f, host, libdir)
 
     os.system(scpCmd);
 
-def deployInSlave(jar, confdir, libdir):
+def deployInSlave(f, confdir, libdir, cc, cm):
     slavefile = confdir + "slaves"
 
-    f = open(slavefile, 'r')
-    for host in f:
-        host = host.rstrip('\n')
-        print "  >>> Deploying jar on %s ..." % (host)
-        rcopy(jar, host, libdir)
+    ccFile = confdir + "core-site.xml"
+    cmFile = confdir + "mapred-site.xml"
 
-def deployInMaster(jar, confdir, libdir):
+    sf = open(slavefile, 'r')
+    for host in sf:
+        host = host.rstrip('\n')
+        print "  >>> Deploying %s on %s ..." % (os.path.basename(f), host)
+        rcopy(f, host, libdir)
+
+        if cc:
+            print "  >>> Deploying [%s] on %s ..." % (os.path.basename(ccFile), host)
+            rcopy(ccFile, host, confdir)
+
+        if cm:
+            print "  >>> Deploying [%s] on %s ..." % (os.path.basename(cmFile), host)
+            rcopy(cmFile, host, confdir)
+
+def deployInMaster(f, confdir, libdir):
     import socket
     masterfile = confdir + "masters"
 
-    f = open(masterfile, 'r')
-    for host in f:
+    mf = open(masterfile, 'r')
+    for host in mf:
         host = host.rstrip('\n')
-        print "  >>> Deploying jar on %s ..." % (host)
+        print "  >>> Deploying %s on %s ..." % (os.path.basename(f), host)
         h = host
         try:
             socket.inet_aton(host)
@@ -107,27 +118,31 @@ def deployInMaster(jar, confdir, libdir):
         if h == socket.gethostname() or h == 'localhost':
             # local cp
             print "   * doing local copy"
-            shutil.copy(jar, libdir)
+            shutil.copy(f, libdir)
         else:
             # scp the file
-            rcopy(jar, h, libdir)
+            rcopy(f, h, libdir)
 
 if __name__ == '__main__':
     opt = args = []
     try:
-        opt, args = getopt.getopt(sys.argv[1:], "bd:", ["build", "dir="]);
+        opt, args = getopt.getopt(sys.argv[1:], "bd:cm", ["build", "dir=", "core", "mapred"]);
     except getopt.GetoptError, err:
         print str(err)
         usage()
         sys.exit(1)
 
-    needbuild = hadoop_dir = None
+    needbuild = hadoop_dir = copyCore = copyMapred = None
 
     for k, v in opt:
         if k in ("-b", "--build"):
             needbuild = True
         elif k in ("-d", "--dir"):
             hadoop_dir = v
+        elif k in ("-c", "--core"):
+            copyCore = True
+        elif k in ("-m", "--mapred"):
+            copyMapred = True
         else:
             assert False, "unhandled option"
 
@@ -160,4 +175,4 @@ if __name__ == '__main__':
 
     print ""
     print " >>> Scanning hadoop slave file for host(s) to deploy"
-    deployInSlave(jar, hadoop_conf, hadoop_lib)
+    deployInSlave(jar, hadoop_conf, hadoop_lib, copyCore, copyMapred)
