@@ -34,11 +34,11 @@ public class GlusterFUSEInputStream extends FSInputStream {
         long                                  pos;
         boolean                               closed;
         String                                thisHost;
+        FileInputStream                       fuseInputStream;
+        FileInputStream                       fsInputStream;
+        GlusterFSBrickClass                   thisBrick;
+        int                                   nodeLocation;
         TreeMap<Integer, GlusterFSBrickClass> hnts;
-        InputStream                           fuseInputStream;
-        InputStream                           fsInputStream;
-        GlusterFSBrickClass thisBrick;
-        int nodeLocation;
 
         public GlusterFUSEInputStream (File f, TreeMap<Integer, GlusterFSBrickClass> hnts,
                                        String hostname) throws IOException {
@@ -102,9 +102,9 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 return false;
         }
 
-        public InputStream chooseStream (long start, int[] nlen) {
+        public FileInputStream chooseStream (long start, int[] nlen) {
                 GlusterFSBrickClass gfsBrick = null;
-                InputStream in = fuseInputStream;
+                FileInputStream in = fuseInputStream;
                 lastActive = true;
 
                 if ((hnts != null) && (fsInputStream != null)) {
@@ -130,7 +130,7 @@ public class GlusterFUSEInputStream extends FSInputStream {
 
         public synchronized int read () throws IOException {
                 int byteRead = 0;
-                InputStream in = null;
+                FileInputStream in = null;
 
                 if (closed)
                         throw new IOException("Stream Closed.");
@@ -140,7 +140,7 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 in = chooseStream(getPos(), nlen);
                 byteRead = in.read();
                 if (byteRead >= 0) {
-                        syncStreams(byteRead);
+                        //                        syncStreams(byteRead);
                         pos++;
                 }
 
@@ -150,7 +150,7 @@ public class GlusterFUSEInputStream extends FSInputStream {
         public synchronized int read (byte buff[], int off, int len) throws
                 IOException {
                 int result = 0;
-                InputStream in = null;
+                FileInputStream in = null;
 
                 if (closed)
                         throw new IOException("Stream Closed.");
@@ -160,7 +160,7 @@ public class GlusterFUSEInputStream extends FSInputStream {
 
                 result = in.read(buff, off, nlen[0]);
                 if (result > 0) {
-                        syncStreams(result);
+                        //                        syncStreams(result);
                         pos += result;
                 }
 
