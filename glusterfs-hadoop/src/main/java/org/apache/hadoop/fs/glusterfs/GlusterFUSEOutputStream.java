@@ -59,6 +59,7 @@ public class GlusterFUSEOutputStream extends OutputStream {
                         throw new IOException("Stream closed.");
 
                 fuseOutputStream.write(b, 0, b.length);
+                pos += (long) b.length;
         }
 
         public void write (byte b[], int off, int len) throws IOException {
