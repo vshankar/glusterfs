@@ -34,11 +34,11 @@ public class GlusterFUSEInputStream extends FSInputStream {
         long                                  pos;
         boolean                               closed;
         String                                thisHost;
+        RandomAccessFile                      fuseInputStream;
+        RandomAccessFile                      fsInputStream;
+        GlusterFSBrickClass                   thisBrick;
+        int                                   nodeLocation;
         TreeMap<Integer, GlusterFSBrickClass> hnts;
-        InputStream                           fuseInputStream;
-        InputStream                           fsInputStream;
-        GlusterFSBrickClass thisBrick;
-        int nodeLocation;
 
         public GlusterFUSEInputStream (File f, TreeMap<Integer, GlusterFSBrickClass> hnts,
                                        String hostname) throws IOException {
@@ -48,7 +48,7 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 this.hnts = hnts;
                 this.thisHost = hostname;
                 this.fsInputStream = null;
-                this.fuseInputStream = new FileInputStream(f.getPath());
+                this.fuseInputStream = new RandomAccessFile(f.getPath(), "r");
 
                 this.lastActive = true; // true == FUSE, false == backed file
 
@@ -56,7 +56,7 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 if (this.hnts != null) {
                         directFilePath = findLocalFile(f.getPath(), this.hnts);
                         if (directFilePath != null) {
-                                this.fsInputStream = new FileInputStream(directFilePath);
+                                this.fsInputStream = new RandomAccessFile(directFilePath, "r");
                                 this.lastActive = !this.lastActive;
                         }
                 }
@@ -89,22 +89,24 @@ public class GlusterFUSEInputStream extends FSInputStream {
         }
 
         public synchronized int available () throws IOException {
-                return (int) ((f.length()) - pos);
+                return (int) ((f.length()) - getPos());
         }
 
         public void seek (long pos) throws IOException {
-                fuseInputStream.skip(pos);
+                fuseInputStream.seek(pos);
                 if (fsInputStream != null)
-                        fsInputStream.skip(pos);
+                        fsInputStream.seek(pos);
         }
 
         public boolean seekToNewSource (long pos) throws IOException {
                 return false;
         }
 
-        public InputStream chooseStream (long start, int[] nlen) {
+        public RandomAccessFile chooseStream (long start, int[] nlen)
+                throws IOException {
                 GlusterFSBrickClass gfsBrick = null;
-                InputStream in = fuseInputStream;
+                RandomAccessFile in = fuseInputStream;
+                boolean oldActiveStream = lastActive;
                 lastActive = true;
 
                 if ((hnts != null) && (fsInputStream != null)) {
@@ -125,12 +127,18 @@ public class GlusterFUSEInputStream extends FSInputStream {
                         }
                 }
 
+                if (lastActive != oldActiveStream)
+                        in.seek(start);
+
                 return in;
         }
 
         public synchronized int read () throws IOException {
                 int byteRead = 0;
-                InputStream in = null;
+                RandomAccessFile in = null;
+
+                System.out.println("read() called for 1 byte");
+                System.out.println("File: " + f.getPath() + " pos: " + pos);
 
                 if (closed)
                         throw new IOException("Stream Closed.");
@@ -138,10 +146,12 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 int[] nlen = { 1 };
 
                 in = chooseStream(getPos(), nlen);
+                System.out.println("reading from: " + (this.lastActive ? "FUSE" : "FS"));
+
                 byteRead = in.read();
                 if (byteRead >= 0) {
-                        syncStreams(byteRead);
                         pos++;
+                        System.out.println("read " + byteRead + " bytes, pos is now " + pos);
                 }
 
                 return byteRead;
@@ -150,31 +160,33 @@ public class GlusterFUSEInputStream extends FSInputStream {
         public synchronized int read (byte buff[], int off, int len) throws
                 IOException {
                 int result = 0;
-                InputStream in = null;
+                RandomAccessFile in = null;
+
+                System.out.println("File: " + f.getPath() + " pos: " + pos +
+                                   " read() called for " + len + " bytes from offset " + off);
 
                 if (closed)
                         throw new IOException("Stream Closed.");
 
                 int[] nlen = {len}; // hack to make len mutable
-                in = chooseStream(pos+off, nlen);
+                in = chooseStream(pos, nlen);
+                System.out.println("reading from: " + (this.lastActive ? "FUSE" : "FS"));
 
                 result = in.read(buff, off, nlen[0]);
                 if (result > 0) {
-                        syncStreams(result);
                         pos += result;
+                        System.out.println("read " + result + " bytes, pos is now " + pos);
                 }
 
                 return result;
         }
 
-        public void syncStreams (int readBytes) throws IOException {
-                // if we switch streams we better read from the right offset
-
+        public void syncStreams (long pos) throws IOException {
                 if ((hnts != null) && (hnts.get(0).isChunked()) && (fsInputStream != null))
                         if (!this.lastActive)
-                                fuseInputStream.skip(readBytes);
+                                fuseInputStream.seek(pos);
                         else
-                                fsInputStream.skip(readBytes);
+                                fsInputStream.seek(pos);
         }
 
         public synchronized void close () throws IOException {
