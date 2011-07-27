@@ -102,9 +102,11 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 return false;
         }
 
-        public RandomAccessFile chooseStream (long start, int[] nlen) {
+        public RandomAccessFile chooseStream (long start, int[] nlen)
+                throws IOException {
                 GlusterFSBrickClass gfsBrick = null;
                 RandomAccessFile in = fuseInputStream;
+                boolean oldActiveStream = lastActive;
                 lastActive = true;
 
                 if ((hnts != null) && (fsInputStream != null)) {
@@ -125,6 +127,9 @@ public class GlusterFUSEInputStream extends FSInputStream {
                         }
                 }
 
+                if (lastActive != oldActiveStream)
+                        in.seek(start);
+
                 return in;
         }
 
@@ -133,6 +138,7 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 RandomAccessFile in = null;
 
                 System.out.println("read() called for 1 byte");
+                System.out.println("File: " + f.getPath() + " pos: " + pos);
 
                 if (closed)
                         throw new IOException("Stream Closed.");
@@ -140,10 +146,12 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 int[] nlen = { 1 };
 
                 in = chooseStream(getPos(), nlen);
+                System.out.println("reading from: " + (this.lastActive ? "FUSE" : "FS"));
+
                 byteRead = in.read();
-                if (byteRead > 0) {
+                if (byteRead >= 0) {
                         pos++;
-                        syncStreams(pos);
+                        System.out.println("read " + byteRead + " bytes, pos is now " + pos);
                 }
 
                 return byteRead;
@@ -154,18 +162,20 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 int result = 0;
                 RandomAccessFile in = null;
 
-                System.out.println("pos: " + pos + " read() called for " + len + " bytes from offset " + off);
+                System.out.println("File: " + f.getPath() + " pos: " + pos +
+                                   " read() called for " + len + " bytes from offset " + off);
 
                 if (closed)
                         throw new IOException("Stream Closed.");
 
                 int[] nlen = {len}; // hack to make len mutable
-                in = chooseStream(pos+off, nlen);
+                in = chooseStream(pos, nlen);
+                System.out.println("reading from: " + (this.lastActive ? "FUSE" : "FS"));
 
                 result = in.read(buff, off, nlen[0]);
                 if (result > 0) {
                         pos += result;
-                        syncStreams(pos);
+                        System.out.println("read " + result + " bytes, pos is now " + pos);
                 }
 
                 return result;
