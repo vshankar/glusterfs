@@ -167,23 +167,6 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 return result;
         }
 
-        public synchronized int readInt() throws IOException {
-                int result;
-                RandomAccessFile in = null;
-
-                if (closed)
-                        throw new IOException("Stream Closed.");
-
-                int[] nlen = {4}; // hack to make len mutable
-                in = chooseStream(pos, nlen);
-
-                result = in.readInt();
-
-                pos += 4;
-                syncStreams(pos);
-                return result;
-        }
-
         public void syncStreams (long pos) throws IOException {
                 if ((hnts != null) && (hnts.get(0).isChunked()) && (fsInputStream != null))
                         if (!this.lastActive)
