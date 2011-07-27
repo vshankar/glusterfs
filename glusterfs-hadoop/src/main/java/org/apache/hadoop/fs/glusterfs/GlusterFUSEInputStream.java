@@ -132,6 +132,8 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 int byteRead = 0;
                 RandomAccessFile in = null;
 
+                System.out.println("read() called for 1 byte");
+
                 if (closed)
                         throw new IOException("Stream Closed.");
 
@@ -151,6 +153,8 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 IOException {
                 int result = 0;
                 RandomAccessFile in = null;
+
+                System.out.println("pos: " + pos + " read() called for " + len + " bytes from offset " + off);
 
                 if (closed)
                         throw new IOException("Stream Closed.");
