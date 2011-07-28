@@ -51,6 +51,7 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 this.fuseInputStream = new RandomAccessFile(f.getPath(), "r");
 
                 this.lastActive = true; // true == FUSE, false == backed file
+                System.out.println("opening file for reading: " + f.getPath());
 
                 String directFilePath = null;
                 if (this.hnts != null) {
@@ -169,7 +170,7 @@ public class GlusterFUSEInputStream extends FSInputStream {
                         throw new IOException("Stream Closed.");
 
                 int[] nlen = {len}; // hack to make len mutable
-                in = chooseStream(pos, nlen);
+                in = chooseStream(pos+off, nlen);
                 System.out.println("reading from: " + (this.lastActive ? "FUSE" : "FS"));
 
                 result = in.read(buff, off, nlen[0]);
@@ -181,12 +182,14 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 return result;
         }
 
-        public void syncStreams (long pos) throws IOException {
-                if ((hnts != null) && (hnts.get(0).isChunked()) && (fsInputStream != null))
+        public void syncStreams (long position) throws IOException {
+                if ((hnts != null) && (hnts.get(0).isChunked()) && (fsInputStream != null)) {
+                        System.out.println("seeking " + (this.lastActive ? "FUSE" : "FS") + " to pos " + position);
                         if (!this.lastActive)
                                 fuseInputStream.seek(pos);
                         else
                                 fsInputStream.seek(pos);
+                }
         }
 
         public synchronized void close () throws IOException {
