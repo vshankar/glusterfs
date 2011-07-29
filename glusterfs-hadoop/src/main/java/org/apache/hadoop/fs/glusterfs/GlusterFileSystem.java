@@ -220,11 +220,14 @@ public class GlusterFileSystem extends FileSystem {
                 Path[] filePath   = null;
                 int    fileCnt    = 0;
 
+                System.out.println("listPaths called");
+
                 fileList = f.list();
 
                 filePath = new Path[fileList.length];
 
                 for (; fileCnt < fileList.length; fileCnt++) {
+                        System.out.println("list: "  + (relPath + "/" + fileList[fileCnt]));
                         filePath[fileCnt] = new Path(relPath + "/" + fileList[fileCnt]);
                 }
 
@@ -243,6 +246,8 @@ public class GlusterFileSystem extends FileSystem {
                         return null;
                 }
 
+                System.out.println("listStatus called");
+
                 if (f.isFile())
                         return new FileStatus[] {
                                 getFileStatus(path)
@@ -256,6 +261,7 @@ public class GlusterFileSystem extends FileSystem {
                 fileStatus = new FileStatus[strFileList.length];
 
                 for (; fileCnt < strFileList.length; fileCnt++) {
+                        System.out.println("list: " + (relpath + strFileList[fileCnt]));
                         fileStatus[fileCnt] = getFileStatusFromFileString(relpath + strFileList[fileCnt]);
                 }
 
@@ -272,8 +278,12 @@ public class GlusterFileSystem extends FileSystem {
                 Path absolute = makeAbsolute(path);
                 File f = new File(absolute.toUri().getPath());
 
+
+
                 if (!f.exists ())
                         throw new FileNotFoundException("File " + f.getPath() + " does not exist.");
+
+                System.out.println("getFileStatus called for: " + path + " returning: " + path.makeQualified(this));
 
                 if (f.isDirectory ())
                         return new FileStatus(0, true, 1, 0, f.lastModified(), path.makeQualified(this));
@@ -323,7 +333,7 @@ public class GlusterFileSystem extends FileSystem {
          * open the file in read mode (internally the file descriptor is an
          * instance of InputStream class).
          *
-         * if quick read mode is set then read the file by by-passing FUSE
+         * if quick read mode is set then read the file by-passing FUSE
          * if we are on same slave where the file exist
          */
         public FSDataInputStream open (Path path) throws IOException {
@@ -331,6 +341,8 @@ public class GlusterFileSystem extends FileSystem {
                 File              f                 = new File(absolute.toUri().getPath());
                 FSDataInputStream glusterFileStream = null;
                 TreeMap<Integer, GlusterFSBrickClass> hnts = null;
+
+                System.out.println("||| open() called for: " + path + " |||");
 
                 if (!f.exists())
                         throw new IOException("File " + f.getPath() + " does not exist.");
@@ -435,6 +447,9 @@ public class GlusterFileSystem extends FileSystem {
                 File f                 = new File(absolute.toUri().getPath());
                 BlockLocation[] result = null;
 
+                System.out.println("gfbl called for: " + file + " : " + f.getPath());
+                new Exception().printStackTrace();
+
                 if (file == null)
                         return null;
 
@@ -451,6 +466,7 @@ public class GlusterFileSystem extends FileSystem {
         // getFileBlockLocations (FileStatus, long, long) is called by hadoop
         public BlockLocation[] getFileBlockLocations (Path p, long start, long len)
                 throws IOException {
+                System.out.println("gfbl psl called");
                 return null;
         }
 

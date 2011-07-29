@@ -128,9 +128,6 @@ public class GlusterFUSEInputStream extends FSInputStream {
                         }
                 }
 
-                if (lastActive != oldActiveStream)
-                        in.seek(start);
-
                 return in;
         }
 
@@ -152,6 +149,7 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 byteRead = in.read();
                 if (byteRead >= 0) {
                         pos++;
+                        syncStreams(pos);
                         System.out.println("read " + byteRead + " bytes, pos is now " + pos);
                 }
 
@@ -176,7 +174,8 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 result = in.read(buff, off, nlen[0]);
                 if (result > 0) {
                         pos += result;
-                        System.out.println("read " + result + " bytes, pos is now " + pos);
+                        syncStreams(pos);
+                        System.out.println("read " + result + " bytes, pos is now " + pos + ", data = [" + new String(buff) + "]");
                 }
 
                 return result;
@@ -186,9 +185,9 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 if ((hnts != null) && (hnts.get(0).isChunked()) && (fsInputStream != null)) {
                         System.out.println("seeking " + (this.lastActive ? "FUSE" : "FS") + " to pos " + position);
                         if (!this.lastActive)
-                                fuseInputStream.seek(pos);
+                                fuseInputStream.seek(position);
                         else
-                                fsInputStream.seek(pos);
+                                fsInputStream.seek(position);
                 }
         }
 
