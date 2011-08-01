@@ -127,9 +127,6 @@ public class GlusterFUSEInputStream extends FSInputStream {
                         }
                 }
 
-                if (lastActive != oldActiveStream)
-                        in.seek(start);
-
                 return in;
         }
 
@@ -137,21 +134,17 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 int byteRead = 0;
                 RandomAccessFile in = null;
 
-                System.out.println("read() called for 1 byte");
-                System.out.println("File: " + f.getPath() + " pos: " + pos);
-
                 if (closed)
                         throw new IOException("Stream Closed.");
 
                 int[] nlen = { 1 };
 
                 in = chooseStream(getPos(), nlen);
-                System.out.println("reading from: " + (this.lastActive ? "FUSE" : "FS"));
 
                 byteRead = in.read();
                 if (byteRead >= 0) {
                         pos++;
-                        System.out.println("read " + byteRead + " bytes, pos is now " + pos);
+                        syncStreams(1);
                 }
 
                 return byteRead;
@@ -162,31 +155,27 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 int result = 0;
                 RandomAccessFile in = null;
 
-                System.out.println("File: " + f.getPath() + " pos: " + pos +
-                                   " read() called for " + len + " bytes from offset " + off);
-
                 if (closed)
                         throw new IOException("Stream Closed.");
 
                 int[] nlen = {len}; // hack to make len mutable
                 in = chooseStream(pos, nlen);
-                System.out.println("reading from: " + (this.lastActive ? "FUSE" : "FS"));
 
                 result = in.read(buff, off, nlen[0]);
                 if (result > 0) {
                         pos += result;
-                        System.out.println("read " + result + " bytes, pos is now " + pos);
+                        syncStreams(result);
                 }
 
                 return result;
         }
 
-        public void syncStreams (long pos) throws IOException {
+        public void syncStreams (int bytes) throws IOException {
                 if ((hnts != null) && (hnts.get(0).isChunked()) && (fsInputStream != null))
                         if (!this.lastActive)
-                                fuseInputStream.seek(pos);
+                                fuseInputStream.skipBytes(bytes);
                         else
-                                fsInputStream.seek(pos);
+                                fsInputStream.skipBytes(bytes);
         }
 
         public synchronized void close () throws IOException {
