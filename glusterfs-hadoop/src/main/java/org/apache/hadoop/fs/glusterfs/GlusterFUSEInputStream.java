@@ -144,7 +144,7 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 byteRead = in.read();
                 if (byteRead >= 0) {
                         pos++;
-                        syncStreams(1);
+                        syncStreams(pos);
                 }
 
                 return byteRead;
@@ -164,18 +164,18 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 result = in.read(buff, off, nlen[0]);
                 if (result > 0) {
                         pos += result;
-                        syncStreams(result);
+                        syncStreams(pos);
                 }
 
                 return result;
         }
 
-        public void syncStreams (int bytes) throws IOException {
+        public void syncStreams (long position) throws IOException {
                 if ((hnts != null) && (hnts.get(0).isChunked()) && (fsInputStream != null))
                         if (!this.lastActive)
-                                fuseInputStream.skipBytes(bytes);
+                                fuseInputStream.seek(position);
                         else
-                                fsInputStream.skipBytes(bytes);
+                                fsInputStream.seek(position);
         }
 
         public synchronized void close () throws IOException {
