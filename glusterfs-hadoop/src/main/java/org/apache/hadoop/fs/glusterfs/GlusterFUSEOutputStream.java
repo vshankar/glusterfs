@@ -69,8 +69,8 @@ public class GlusterFUSEOutputStream extends OutputStream {
 
                 char[] cBytes = new String(b).toCharArray();
 
-                out.write(cBytes, off, len);
-                pos += (long) len;
+                out.write(cBytes, 0, cBytes.length);
+                pos += (long) cBytes.length;
         }
 
         public void flush () throws IOException {
