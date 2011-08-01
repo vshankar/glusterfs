@@ -31,12 +31,14 @@ public class GlusterFUSEOutputStream extends OutputStream {
         long         pos;
         boolean      closed;
         OutputStream fuseOutputStream;
+        Writer out;
 
         public GlusterFUSEOutputStream (String file, boolean append) throws
                 IOException {
                 this.f = new File(file); /* not needed ? */
                 this.pos = 0;
                 this.fuseOutputStream = new FileOutputStream(file, append);
+                this.out = new OutputStreamWriter(this.fuseOutputStream, "UTF8");
                 this.closed = false;
         }
 
@@ -58,14 +60,16 @@ public class GlusterFUSEOutputStream extends OutputStream {
                 if (closed)
                         throw new IOException("Stream closed.");
 
-                fuseOutputStream.write(b, 0, b.length);
+                write(b, 0, b.length);
         }
 
         public void write (byte b[], int off, int len) throws IOException {
                 if (closed)
                         throw new IOException("Stream closed.");
 
-                fuseOutputStream.write(b, off, len);
+                char[] cBytes = new String(b).toCharArray();
+
+                out.write(cBytes, off, len);
                 pos += (long) len;
         }
 
@@ -73,7 +77,7 @@ public class GlusterFUSEOutputStream extends OutputStream {
                 if (closed)
                         throw new IOException("Stream closed.");
 
-                fuseOutputStream.flush();
+                out.flush();
         }
 
         public void close () throws IOException {
@@ -81,6 +85,8 @@ public class GlusterFUSEOutputStream extends OutputStream {
                         throw new IOException("Stream closed.");
 
                 flush();
+                
+                out.close();
                 fuseOutputStream.close();
                 closed = true;
         }
