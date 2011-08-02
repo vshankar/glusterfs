@@ -87,7 +87,7 @@ public class GlusterFUSEInputStream extends FSInputStream {
         }
 
         public long getPos () throws IOException {
-                return pos;
+                return filePointer;
         }
 
         public synchronized int available () throws IOException {
@@ -95,9 +95,9 @@ public class GlusterFUSEInputStream extends FSInputStream {
         }
 
         public void seek (long pos) throws IOException {
-                fuseInputStream.seek(pos);
+                fuseInputStream.seek(filePointer);
                 if (fsInputStream != null)
-                        fsInputStream.seek(pos);
+                        fsInputStream.seek(filePointer);
         }
 
         public boolean seekToNewSource (long pos) throws IOException {
