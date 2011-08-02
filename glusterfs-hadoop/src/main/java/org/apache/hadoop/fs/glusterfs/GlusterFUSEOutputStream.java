@@ -48,10 +48,13 @@ public class GlusterFUSEOutputStream extends OutputStream {
                 if (closed)
                         throw new IOException("Stream closed.");
 
+                /*
                 byte[] b = new byte[1];
                 b[0] = (byte) v;
+                */
 
-                write(b, 0, 1);
+                fuseOutputStream.write(v);
+                pos++;
         }
 
         public void write (byte b[]) throws IOException {
