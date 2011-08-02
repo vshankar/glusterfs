@@ -32,6 +32,7 @@ public class GlusterFUSEInputStream extends FSInputStream {
         File                                  f;
         boolean                               lastActive;
         long                                  pos;
+        long                                  filePointer;
         boolean                               closed;
         String                                thisHost;
         RandomAccessFile                      fuseInputStream;
@@ -44,6 +45,7 @@ public class GlusterFUSEInputStream extends FSInputStream {
                                        String hostname) throws IOException {
                 this.f = f;
                 this.pos = 0;
+                this.filePointer = 0;
                 this.closed = false;
                 this.hnts = hnts;
                 this.thisHost = hostname;
@@ -125,6 +127,10 @@ public class GlusterFUSEInputStream extends FSInputStream {
                                         lastActive = false;
                                 }
                         }
+
+                        if (oldActiveStream != lastActive) {
+                                in.seek(filePointer);
+                        }
                 }
 
                 return in;
@@ -144,9 +150,9 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 byteRead = in.read();
                 if (byteRead >= 0) {
                         pos++;
-                        syncStreams(pos);
                 }
 
+                filePointer = in.getFilePointer();
                 return byteRead;
         }
 
@@ -164,9 +170,9 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 result = in.read(buff, off, nlen[0]);
                 if (result > 0) {
                         pos += result;
-                        syncStreams(pos);
                 }
 
+                filePointer = in.getFilePointer();
                 return result;
         }
 
