@@ -170,6 +170,9 @@ public class GlusterFUSEInputStream extends FSInputStream {
                 return result;
         }
 
+        /**
+         * TODO: use seek() insted of skipBytes(); skipBytes does I/O
+         */
         public void syncStreams (int bytes) throws IOException {
                 if ((hnts != null) && (hnts.get(0).isChunked()) && (fsInputStream != null))
                         if (!this.lastActive)

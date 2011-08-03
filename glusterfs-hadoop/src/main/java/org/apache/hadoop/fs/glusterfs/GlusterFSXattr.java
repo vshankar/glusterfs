@@ -333,6 +333,7 @@ public class GlusterFSXattr {
 
                         key = null;
                         int currAlloc = 0;
+                        boolean hntsDone = false;
                         while ((stripeStart < len) && !done) {
                                 stripeEnd = (stripeStart - (stripeStart % stripeSize)) + stripeSize - 1;
                                 if (stripeEnd > start + len) {
@@ -350,11 +351,16 @@ public class GlusterFSXattr {
                                         if (hnts == null)
                                                 repl[allocCtr].addHost(brick2host(brick));
                                         else
-                                                if (currAlloc <= (rsize * rcount))
+                                                if (currAlloc <= (rsize * rcount)) {
                                                         hnts.put(currAlloc, new GlusterFSBrickClass(brick, stripeStart,
                                                                                                     (stripeEnd - stripeStart),
                                                                                                     true, stripeSize, rcount, rsize));
+                                                } else
+                                                        hntsDone = true;
                                 }
+
+                                if (hntsDone)
+                                        break;
 
                                 stripeStart = stripeEnd + 1;
 
@@ -408,9 +414,11 @@ public class GlusterFSXattr {
                                         result[allocCtr] = new BlockLocation(null, new String[] {brick2host(brick)},
                                                                              stripeStart, (stripeEnd - stripeStart));
                                 else
-                                        if (allocCtr <= stripedBricks.size())
+                                        if (allocCtr <= stripedBricks.size()) {
                                                 hnts.put(allocCtr, new GlusterFSBrickClass(brick, stripeStart, (stripeEnd - stripeStart),
                                                                                            true, stripeSize, stripedBricks.size(), -1));
+                                        } else
+                                                break;
 
                                 stripeStart = stripeEnd + 1;
 
