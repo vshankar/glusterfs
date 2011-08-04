@@ -7,7 +7,7 @@ import shutil
 import subprocess, shlex
 
 def usage():
-    print "usage: python build-deploy-jar.py [-b/--build] -d/--dir <hadoop-home> [-c/--core] [-m/--mapred]"
+    print "usage: python build-deploy-jar.py [-b/--build] -d/--dir <hadoop-home> [-c/--core] [-m/--mapred] [-h/--henv]"
 
 def addSlash(s):
     if not (s[-1] == '/'):
@@ -79,11 +79,12 @@ def rcopy(f, host, libdir):
 
     os.system(scpCmd);
 
-def deployInSlave(f, confdir, libdir, cc, cm):
+def deployInSlave(f, confdir, libdir, cc, cm, he):
     slavefile = confdir + "slaves"
 
     ccFile = confdir + "core-site.xml"
     cmFile = confdir + "mapred-site.xml"
+    heFile = confdir + "hadoop-env.sh"
 
     sf = open(slavefile, 'r')
     for host in sf:
@@ -98,6 +99,10 @@ def deployInSlave(f, confdir, libdir, cc, cm):
         if cm:
             print "  >>> Deploying [%s] on %s ..." % (os.path.basename(cmFile), host)
             rcopy(cmFile, host, confdir)
+
+        if he:
+            print "  >>> Deploying [%s] on %s ..." % (os.path.basename(heFile), host)
+            rcopy(heFile, host, confdir);
 
         print "<<< Done\n"
 
@@ -130,13 +135,13 @@ def deployInMaster(f, confdir, libdir):
 if __name__ == '__main__':
     opt = args = []
     try:
-        opt, args = getopt.getopt(sys.argv[1:], "bd:cm", ["build", "dir=", "core", "mapred"]);
+        opt, args = getopt.getopt(sys.argv[1:], "bd:cmh", ["build", "dir=", "core", "mapred", "henv"]);
     except getopt.GetoptError, err:
         print str(err)
         usage()
         sys.exit(1)
 
-    needbuild = hadoop_dir = copyCore = copyMapred = None
+    needbuild = hadoop_dir = copyCore = copyMapred = copyHadoopEnv = None
 
     for k, v in opt:
         if k in ("-b", "--build"):
@@ -147,6 +152,8 @@ if __name__ == '__main__':
             copyCore = True
         elif k in ("-m", "--mapred"):
             copyMapred = True
+        elif k in ("-h", "--henv"):
+            copyHadoopEnv = True
         else:
             assert False, "unhandled option"
 
@@ -179,4 +186,4 @@ if __name__ == '__main__':
 
     print ""
     print " >>> Scanning hadoop slave file for host(s) to deploy"
-    deployInSlave(jar, hadoop_conf, hadoop_lib, copyCore, copyMapred)
+    deployInSlave(jar, hadoop_conf, hadoop_lib, copyCore, copyMapred, copyHadoopEnv)
