@@ -351,7 +351,7 @@ public class GlusterFSXattr {
                                         if (hnts == null)
                                                 repl[allocCtr].addHost(brick2host(brick));
                                         else
-                                                if (currAlloc <= (rsize * rcount)) {
+                                                if (currAlloc <= (rsize * rcount) - 1) {
                                                         hnts.put(currAlloc, new GlusterFSBrickClass(brick, stripeStart,
                                                                                                     (stripeEnd - stripeStart),
                                                                                                     true, stripeSize, rcount, rsize));
