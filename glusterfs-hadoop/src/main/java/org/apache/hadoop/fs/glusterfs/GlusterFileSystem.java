@@ -428,7 +428,7 @@ public class GlusterFileSystem extends FileSystem {
         }
 
         public long getDefaultBlockSize () {
-                return 2 << 26; /* default's from hdfs, kfs */
+                return 1 << 26; /* default's from hdfs, kfs */
         }
 
         @Deprecated
