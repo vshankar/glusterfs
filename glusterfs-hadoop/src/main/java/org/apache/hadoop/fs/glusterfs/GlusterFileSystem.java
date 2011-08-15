@@ -79,7 +79,7 @@ public class GlusterFileSystem extends FileSystem {
                 String         s        = null;
                 String         mountCmd = null;
 
-                mountCmd = "sudo mount -t glusterfs " + server + ":" + "/" + volname + " " + mount;
+                mountCmd = "mount -t glusterfs " + server + ":" + "/" + volname + " " + mount;
 
                 try {
                         p = Runtime.getRuntime().exec(mountCmd);

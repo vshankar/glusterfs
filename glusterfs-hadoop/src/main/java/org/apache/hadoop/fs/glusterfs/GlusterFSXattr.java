@@ -144,7 +144,7 @@ public class GlusterFSXattr {
 
                 HashMap<String, ArrayList<String>> vol = new HashMap<String, ArrayList<String>>();
 
-                getfattrCmd = "sudo getfattr -m . -n trusted.glusterfs.pathinfo " + filename;
+                getfattrCmd = "getfattr -m . -n trusted.glusterfs.pathinfo " + filename;
 
                 p = Runtime.getRuntime().exec(getfattrCmd);
                 brInput = new BufferedReader(new InputStreamReader(p.getInputStream()));
