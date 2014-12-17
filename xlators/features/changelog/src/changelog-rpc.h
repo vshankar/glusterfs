@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2013 Red Hat, Inc. <http://www.redhat.com>
+   Copyright (c) 2015 Red Hat, Inc. <http://www.redhat.com>
    This file is part of GlusterFS.
 
    This file is licensed to you under your choice of the GNU Lesser
@@ -8,12 +8,18 @@
    cases as published by the Free Software Foundation.
 */
 
-#ifndef _CHANGELOG_NOTIFIER_H
-#define _CHANGELOG_NOTIFIER_H
+#ifndef __CHANGELOG_RPC_H
+#define __CHANGELOG_RPC_H
 
+#include "xlator.h"
 #include "changelog-helpers.h"
 
-void *
-changelog_notifier (void *data);
+// one time
+#include "socket.h"
+#include "changelog-rpc-common.h"
+
+#define CHANGELOG_RPC_PROGNAME  "GlusterFS Changelog"
+
+rpcsvc_t *changelog_init_rpc_listner (xlator_t *, changelog_priv_t *, rbuf_t *);
 
 #endif

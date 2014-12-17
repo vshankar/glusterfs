@@ -19,14 +19,13 @@
 #include "iobuf.h"
 
 #include "changelog-rt.h"
-#include "changelog-helpers.h"
 
 #include "changelog-encoders.h"
 #include "changelog-mem-types.h"
 
 #include <pthread.h>
 
-#include "changelog-notifier.h"
+#include "changelog-rpc.h"
 
 static struct changelog_bootstrap
 cb_bootstrap[] = {
@@ -1679,7 +1678,7 @@ changelog_cleanup_helper_threads (xlator_t *this, changelog_priv_t *priv)
         int ret = 0;
 
         if (priv->cr.rollover_th) {
-                changelog_thread_cleanup (this, priv->cr.rollover_th);
+                (void) changelog_thread_cleanup (this, priv->cr.rollover_th);
                 priv->cr.rollover_th = 0;
                 ret = close (priv->cr_wfd);
                 if (ret)
@@ -1689,7 +1688,7 @@ changelog_cleanup_helper_threads (xlator_t *this, changelog_priv_t *priv)
         }
 
         if (priv->cf.fsync_th) {
-                changelog_thread_cleanup (this, priv->cf.fsync_th);
+                (void) changelog_thread_cleanup (this, priv->cf.fsync_th);
                 priv->cf.fsync_th = 0;
         }
 }
@@ -1749,67 +1748,6 @@ changelog_spawn_helper_threads (xlator_t *this, changelog_priv_t *priv)
 
         if (ret)
                 changelog_cleanup_helper_threads (this, priv);
-
- out:
-        return ret;
-}
-
-/* cleanup the notifier thread */
-static int
-changelog_cleanup_notifier (xlator_t *this, changelog_priv_t *priv)
-{
-        int ret = 0;
-
-        if (priv->cn.notify_th) {
-                changelog_thread_cleanup (this, priv->cn.notify_th);
-                priv->cn.notify_th = 0;
-
-                ret = close (priv->wfd);
-                if (ret)
-                        gf_log (this->name, GF_LOG_ERROR,
-                                "error closing writer end of notifier pipe"
-                                " (reason: %s)", strerror (errno));
-        }
-
-        return ret;
-}
-
-/* spawn the notifier thread - nop if already running */
-static int
-changelog_spawn_notifier (xlator_t *this, changelog_priv_t *priv)
-{
-        int ret        = 0;
-        int flags      = 0;
-        int pipe_fd[2] = {0, 0};
-
-        if (priv->cn.notify_th)
-                goto out; /* notifier thread already running */
-
-        ret = pipe (pipe_fd);
-        if (ret == -1) {
-                gf_log (this->name, GF_LOG_ERROR,
-                        "Cannot create pipe (reason: %s)", strerror (errno));
-                goto out;
-        }
-
-        /* writer is non-blocking */
-        flags = fcntl (pipe_fd[1], F_GETFL);
-        flags |= O_NONBLOCK;
-
-        ret = fcntl (pipe_fd[1], F_SETFL, flags);
-        if (ret) {
-                gf_log (this->name, GF_LOG_ERROR,
-                        "failed to set O_NONBLOCK flag");
-                goto out;
-        }
-
-        priv->wfd = pipe_fd[1];
-
-        priv->cn.this = this;
-        priv->cn.rfd  = pipe_fd[0];
-
-        ret = gf_thread_create (&priv->cn.notify_th,
-				NULL, changelog_notifier, priv);
 
  out:
         return ret;
@@ -2054,11 +1992,6 @@ changelog_init (xlator_t *this, changelog_priv_t *priv)
         if (!priv->active)
                 return ret;
 
-        /* spawn the notifier thread */
-        ret = changelog_spawn_notifier (this, priv);
-        if (ret)
-                goto out;
-
         /**
          * start with a fresh changelog file every time. this is done
          * in case there was an encoding change. so... things are kept
@@ -2284,17 +2217,13 @@ reconfigure (xlator_t *this, dict_t *options)
                                 }
                                 htime_open(this, priv, tv.tv_sec);
                         }
-                        ret = changelog_spawn_notifier (this, priv);
-                        if (!ret)
-                                ret = changelog_spawn_helper_threads (this,
-                                                                      priv);
-                } else
-                        ret = changelog_cleanup_notifier (this, priv);
+                        ret = changelog_spawn_helper_threads (this, priv);
+                }
         }
 
  out:
         if (ret) {
-                ret = changelog_cleanup_notifier (this, priv);
+                // TODO
         } else {
                 gf_log (this->name, GF_LOG_DEBUG,
                         "changelog reconfigured");
@@ -2308,13 +2237,15 @@ reconfigure (xlator_t *this, dict_t *options)
 int32_t
 init (xlator_t *this)
 {
-        int                     ret                     = -1;
-        char                    *tmp                    = NULL;
-        changelog_priv_t        *priv                   = NULL;
-        gf_boolean_t            cond_lock_init          = _gf_false;
-        char                    htime_dir[PATH_MAX]     = {0,};
-        char                    csnap_dir[PATH_MAX]     = {0,};
-        uint32_t                timeout                 = 0;
+        int               ret                       = -1;
+        char             *tmp                       = NULL;
+        changelog_priv_t *priv                      = NULL;
+        gf_boolean_t      cond_lock_init            = _gf_false;
+        char                    htime_dir[PATH_MAX] = {0,};
+        char                    csnap_dir[PATH_MAX] = {0,};
+        uint32_t          timeout                   = 0;
+        rpcsvc_t         *rpc                       = NULL;
+        pthread_t         poll_thr                  = 0;
 
         GF_VALIDATE_OR_GOTO ("changelog", this, out);
 
@@ -2436,6 +2367,22 @@ init (xlator_t *this)
         INIT_LIST_HEAD (&priv->queue);
         priv->barrier_enabled = _gf_false;
 
+        ret = pthread_create (&poll_thr, NULL, changelog_rpc_poller, this);
+        if (ret != 0) {
+                gf_log (this->name, GF_LOG_ERROR,
+                        "failed to spawn poller thread");
+                goto out;
+        }
+
+        priv->rbuf = rbuf_init (2);
+        if (!priv->rbuf)
+                goto out;
+
+        rpc = changelog_init_rpc_listner (this, priv, priv->rbuf);
+        if (!rpc)
+                goto out;
+        priv->rpc = rpc;
+
         ret = changelog_init (this, priv);
         if (ret)
                 goto out;
@@ -2453,6 +2400,10 @@ init (xlator_t *this)
                                         gf_log (this->name, GF_LOG_ERROR,
                                         "error in cleanup during init()");
                         }
+
+                        rbuf_dtor (priv->rbuf);
+                        /* cleanup RPC threads */
+
                         GF_FREE (priv->changelog_brick);
                         GF_FREE (priv->changelog_dir);
                         if (cond_lock_init)

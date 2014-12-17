@@ -24,6 +24,7 @@
 #include "changelog-mem-types.h"
 
 #include "changelog-encoders.h"
+#include "changelog-rpc-common.h"
 #include <pthread.h>
 
 static inline void
@@ -57,7 +58,7 @@ changelog_cleanup_free_mutex (void *arg_mutex)
             pthread_mutex_unlock(p_mutex);
 }
 
-void
+int
 changelog_thread_cleanup (xlator_t *this, pthread_t thr_id)
 {
         int   ret    = 0;
@@ -65,7 +66,7 @@ changelog_thread_cleanup (xlator_t *this, pthread_t thr_id)
 
         /* send a cancel request to the thread */
         ret = pthread_cancel (thr_id);
-        if (ret) {
+        if (ret != 0) {
                 gf_log (this->name, GF_LOG_ERROR,
                         "could not cancel thread (reason: %s)",
                         strerror (errno));
@@ -73,14 +74,29 @@ changelog_thread_cleanup (xlator_t *this, pthread_t thr_id)
         }
 
         ret = pthread_join (thr_id, &retval);
-        if (ret || (retval != PTHREAD_CANCELED)) {
+        if ((ret != 0) || (retval != PTHREAD_CANCELED)) {
                 gf_log (this->name, GF_LOG_ERROR,
                         "cancel request not adhered as expected"
                         " (reason: %s)", strerror (errno));
         }
 
  out:
-        return;
+        return ret;
+}
+
+inline void
+changelog_perform_dispatch (changelog_priv_t *priv, void *mem, size_t size)
+{
+        char *buf    = NULL;
+        void *opaque = NULL;
+
+        buf = rbuf_reserve_write_area (priv->rbuf, size, &opaque);
+        if (!buf) {
+                /* TODO: log failure */
+                return;
+        }
+        memcpy (buf, mem, size);
+        rbuf_write_complete (opaque);
 }
 
 inline void *
@@ -206,9 +222,9 @@ changelog_rollover_changelog (xlator_t *this,
 {
         int   ret            = -1;
         int   notify         = 0;
-        char *bname          = NULL;
         char ofile[PATH_MAX] = {0,};
         char nfile[PATH_MAX] = {0,};
+        changelog_event_t ev = {0,};
 
         if (priv->changelog_fd != -1) {
                 ret = fsync (priv->changelog_fd);
@@ -252,40 +268,32 @@ changelog_rollover_changelog (xlator_t *this,
         }
 
         if (notify) {
-                bname = basename (nfile);
-                gf_log (this->name, GF_LOG_DEBUG, "notifying: %s", bname);
-                ret = changelog_write (priv->wfd, bname, strlen (bname) + 1);
-                if (ret) {
-                        gf_log (this->name, GF_LOG_ERROR,
-                                "Failed to send file name to notify thread"
-                                " (reason: %s)", strerror (errno));
-                } else {
-                        /* If this is explicit rollover initiated by snapshot,
-                         * wakeup reconfigure thread waiting for changelog to
-                         * rollover
-                         */
-                        if (priv->explicit_rollover) {
-                                priv->explicit_rollover = _gf_false;
-                                ret = pthread_mutex_lock (
-                                                   &priv->bn.bnotify_mutex);
+                ev.ev_type = CHANGELOG_OP_TYPE_JOURNAL;
+                memcpy (ev.u.journal.path, nfile, strlen (nfile) + 1);
+                changelog_perform_dispatch (priv, &ev, CHANGELOG_EV_SIZE);
+
+                /* If this is explicit rollover initiated by snapshot,
+                 * wakeup reconfigure thread waiting for changelog to
+                 * rollover
+                 */
+                if (priv->explicit_rollover) {
+                        priv->explicit_rollover = _gf_false;
+
+                        ret = pthread_mutex_lock (&priv->bn.bnotify_mutex);
+                        CHANGELOG_PTHREAD_ERROR_HANDLE_0 (ret, out);
+                        {
+                                priv->bn.bnotify = _gf_false;
+                                ret = pthread_cond_signal
+                                        (&priv->bn.bnotify_cond);
                                 CHANGELOG_PTHREAD_ERROR_HANDLE_0 (ret, out);
-                                {
-                                         priv->bn.bnotify = _gf_false;
-                                         ret = pthread_cond_signal (
-                                                        &priv->bn.bnotify_cond);
-                                         CHANGELOG_PTHREAD_ERROR_HANDLE_0 (ret,
-                                                                           out);
-                                         gf_log (this->name, GF_LOG_INFO,
-                                                 "Changelog published: %s and"
-                                                 " signalled bnotify", bname);
-                                }
-                                ret = pthread_mutex_unlock (
-                                                       &priv->bn.bnotify_mutex);
-                                CHANGELOG_PTHREAD_ERROR_HANDLE_0 (ret, out);
+                                gf_log (this->name, GF_LOG_INFO,
+                                        "Changelog published: %s signalled"
+                                        " bnotify", nfile);
                         }
+                        ret = pthread_mutex_unlock (&priv->bn.bnotify_mutex);
+                        CHANGELOG_PTHREAD_ERROR_HANDLE_0 (ret, out);
                 }
         }
-
  out:
         return ret;
 }
@@ -434,8 +442,8 @@ changelog_snap_logging_stop (xlator_t *this,
 }
 
 int
-changelog_open (xlator_t *this,
-                changelog_priv_t *priv)
+changelog_open_journal (xlator_t *this,
+                        changelog_priv_t *priv)
 {
         int fd                        = 0;
         int ret                       = -1;
@@ -490,7 +498,7 @@ changelog_start_next_change (xlator_t *this,
         ret = changelog_rollover_changelog (this, priv, ts);
 
         if (!ret && !finale)
-                ret = changelog_open (this, priv);
+                ret = changelog_open_journal (this, priv);
 
         return ret;
 }

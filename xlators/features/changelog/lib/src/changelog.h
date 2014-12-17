@@ -11,6 +11,30 @@
 #ifndef _GF_CHANGELOG_H
 #define _GF_CHANGELOG_H
 
+struct gf_brick_spec;
+
+/**
+ * event callback, connected & disconnection defs
+ */
+typedef int (CALLBACK) (void *, char *,
+                        void *, struct iovec **, int);
+typedef void *(INIT) (void *, struct gf_brick_spec *);
+typedef void (FINI) (void *, char *, void *);
+typedef void (CONNECT) (void *, char *, void *);
+typedef void (DISCONNECT) (void *, char *, void *);
+
+struct gf_brick_spec {
+        char *brick_path;
+
+        INIT *init;
+        FINI *fini;
+        CALLBACK *callback;
+        CONNECT *connected;
+        DISCONNECT *disconnected;
+
+        void *ptr;
+};
+
 /* API set */
 
 int
