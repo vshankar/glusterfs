@@ -26,6 +26,7 @@
 #include "glusterd-svc-mgmt.h"
 #include "glusterd-snapd-svc-helper.h"
 #include "glusterd-quotad-svc.h"
+#include "glusterd-bitd-svc.h"
 
 #include "glusterfs3.h"
 #include "protocol-common.h"
