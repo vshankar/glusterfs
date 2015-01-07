@@ -4064,6 +4064,123 @@ glusterd_create_rb_volfiles (glusterd_volinfo_t *volinfo,
         return ret;
 }
 
+static int
+bitd_graph_builder (volgen_graph_t *graph, glusterd_volinfo_t *volinfo,
+                    dict_t *set_dict, void *param)
+{
+        glusterd_brickinfo_t    *brickinfo                    = NULL;
+        int                      ret                          = -1;
+        xlator_t                *this                         = NULL;
+        xlator_t                *br                           = NULL;
+        char                     transt[16]                   = {0, };
+        char              *br_args[]           = {"features/bit-rot",
+                                                   "%s-bit-rot"};
+        int32_t                  count = 0;
+        int                      i = 0;
+        xlator_t                *xl = NULL;
+        xlator_t                *txl = NULL;
+        xlator_t                *trav = NULL;
+
+        this = THIS;
+        GF_ASSERT (this);
+
+        get_transport_type (volinfo, set_dict, transt, _gf_false);
+        if (!strcmp (transt, "tcp,rdma"))
+                strcpy (transt, "tcp");
+
+        list_for_each_entry (brickinfo, &volinfo->bricks, brick_list) {
+                if (!glusterd_is_local_brick (this, volinfo, brickinfo))
+                        continue;
+
+                gf_log (this->name, GF_LOG_DEBUG,
+                        "Found a brick - %s:%s", brickinfo->hostname,
+                        brickinfo->path);
+
+                xl = volgen_graph_build_client (graph, volinfo,
+                                                brickinfo->hostname,
+                                                brickinfo->path,
+                                                brickinfo->brick_id, transt,
+                                                set_dict);
+                if (!xl) {
+                        ret = -1;
+                        goto out;
+                }
+
+                count++;
+        }
+
+        br = volgen_graph_add_nolink (graph, br_args[0], br_args[1],
+                                      volinfo->volname);
+        if (!br) {
+                ret = -1;
+                goto out;
+        }
+
+        txl = first_of (graph);
+        for (trav = txl; count--; trav = trav->next);
+        for (; trav != txl; trav = trav->prev) {
+                /* if (trav == txl) */
+                /*         break; */
+
+                ret = volgen_xlator_link (br, trav);
+                if (ret)
+                        goto out;
+        }
+
+        ret = 0;
+
+out:
+        gf_log (this->name, GF_LOG_DEBUG, "Returning %d", ret);
+        return ret;
+}
+
+static int
+build_bitd_graph (volgen_graph_t *graph, glusterd_volinfo_t *volinfo,
+                    dict_t *mod_dict)
+{
+        return build_graph_generic (graph, volinfo, mod_dict, NULL,
+                                    &bitd_graph_builder);
+}
+
+int
+generate_bitd_volfile (glusterd_volinfo_t *volinfo)
+{
+        volgen_graph_t graph = {0,};
+        int     ret = -1;
+        char   filepath[PATH_MAX]  = {0, };
+        dict_t *dict = NULL;
+
+        dict = dict_new ();
+        if (!dict)
+                goto out;
+
+        ret = glusterd_get_bitd_filepath (filepath, volinfo);
+        if (ret) {
+                gf_log (THIS->name, GF_LOG_ERROR, "failed to get the path for "
+                        "bitd volfile (volume: %s)", volinfo->volname);
+                goto out;
+        }
+
+        /*
+         * Since bitd is a service running within the trusted storage pool,
+         * it is treated as a trusted client.
+         */
+        ret = dict_set_uint32 (dict, "trusted-client", GF_CLIENT_TRUSTED);
+        if (ret)
+                goto out;
+
+        ret = build_bitd_graph (&graph, volinfo, dict);
+        if (!ret)
+                ret = volgen_write_volfile (&graph, filepath);
+
+        volgen_graph_free (&graph);
+
+out:
+        if (dict)
+                dict_unref (dict);
+        return ret;
+}
+
 int
 glusterd_create_volfiles (glusterd_volinfo_t *volinfo)
 {
@@ -4090,6 +4207,11 @@ glusterd_create_volfiles (glusterd_volinfo_t *volinfo)
         if (ret)
                 gf_log (this->name, GF_LOG_ERROR,
                         "Could not generate client volfiles");
+
+        ret = generate_bitd_volfile (volinfo);
+        if (ret)
+                gf_log (this->name, GF_LOG_ERROR,
+                        "Could not generate bitd volfile");
 
 out:
         return ret;

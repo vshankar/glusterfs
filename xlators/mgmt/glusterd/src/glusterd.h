@@ -129,6 +129,14 @@ typedef struct {
         gf_store_handle_t *handle;
 } glusterd_snapd_t;
 
+struct glusterd_bitd {
+        struct rpc_clnt   *rpc;
+        gf_boolean_t       online;
+        gf_store_handle_t *handle;
+};
+
+typedef struct glusterd_bitd glusterd_bitd_t;
+
 typedef struct {
         struct _volfile_ctx     *volfile;
         pthread_mutex_t          mutex;
@@ -382,6 +390,15 @@ struct glusterd_volinfo_ {
         gd_quorum_status_t        quorum_status;
 
         glusterd_snapd_t          snapd;
+
+        /*
+         * bitd is included in volinfo, assuming that bit is per volume
+         * per node. Once it changes to per node bitd (where one single
+         * bitd in a node can handle all the bricks from all the volumes
+         * present in that node), the below element has to be removed from
+         * the definition of volinfo structure.
+         */
+        glusterd_bitd_t           bitd;
 };
 
 typedef enum gd_snap_status_ {
@@ -481,6 +498,7 @@ typedef enum {
 #define GLUSTERD_PEER_DIR_PREFIX "peers"
 #define GLUSTERD_VOLUME_INFO_FILE "info"
 #define GLUSTERD_VOLUME_SNAPD_INFO_FILE "snapd.info"
+#define GLUSTERD_VOLUME_BITD_INFO_FILE "bitd.info"
 #define GLUSTERD_SNAP_INFO_FILE "info"
 #define GLUSTERD_VOLUME_RBSTATE_FILE "rbstate"
 #define GLUSTERD_BRICK_INFO_DIR "bricks"

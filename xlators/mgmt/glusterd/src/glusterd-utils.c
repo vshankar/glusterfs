@@ -3024,7 +3024,39 @@ glusterd_spawn_daemons (void *opaque)
         glusterd_restart_gsyncds (conf);
         glusterd_restart_rebalance (conf);
         ret = glusterd_restart_snapds (conf);
+        ret = glusterd_restart_bitds (conf);
 
+        return ret;
+}
+
+/*
+ * As  of now, bitd is per node, per volume. But in future if
+ * bitd is made per node only (i.e. one bitd on a peer will
+ * take care of all the bricks from all the volumes on that node),
+ * then the below things such as the location of the info file for
+ * the bitd has to change.
+ */
+int
+glusterd_restart_bitds (glusterd_conf_t *priv)
+{
+        glusterd_volinfo_t      *volinfo        = NULL;
+        int                      ret            = 0;
+        xlator_t                *this           = THIS;
+
+        list_for_each_entry (volinfo, &priv->volumes, vol_list) {
+                if (volinfo->status == GLUSTERD_STATUS_STARTED) {
+                        //&& glusterd_is_bitd_enabled (volinfo)) {
+                        ret = glusterd_bitd_start (volinfo,
+                                                    _gf_false);
+                        if (ret) {
+                                gf_log (this->name, GF_LOG_ERROR,
+                                        "Couldn't start snapd for "
+                                        "vol: %s", volinfo->volname);
+                                goto out;
+                        }
+                }
+        }
+out:
         return ret;
 }
 
@@ -7452,6 +7484,23 @@ out:
 }
 
 int
+glusterd_get_bitd_filepath (char *filepath, glusterd_volinfo_t *volinfo)
+{
+        int   ret             = 0;
+        char  path[PATH_MAX]  = {0,};
+        glusterd_conf_t *priv = NULL;
+
+        priv = THIS->private;
+
+        GLUSTERD_GET_VOLUME_DIR (path, volinfo, priv);
+
+        snprintf (filepath, PATH_MAX,
+                  "%s/%s-bitd.vol", path, volinfo->volname);
+
+        return ret;
+}
+
+int
 glusterd_get_client_filepath (char *filepath, glusterd_volinfo_t *volinfo,
                               gf_transport_type type)
 {
@@ -10487,4 +10536,355 @@ glusterd_op_clear_xaction_peers ()
                 list_del_init (&peerinfo->op_peers_list);
         }
 
+}
+
+struct rpc_clnt*
+glusterd_bitd_get_rpc (glusterd_volinfo_t *volinfo)
+{
+        return volinfo->bitd.rpc;
+}
+
+int
+glusterd_is_bitd_enabled (glusterd_volinfo_t *volinfo)
+{
+        int              ret    = 0;
+        xlator_t        *this   = THIS;
+
+        ret = dict_get_str_boolean (volinfo->dict, "features.bit-rot", -2);
+        if (ret == -2) {
+                gf_log (this->name, GF_LOG_DEBUG, "Key features.bit-rot not "
+                        "present in the dict for volume %s", volinfo->volname);
+                ret = 0;
+
+        } else if (ret == -1) {
+                gf_log (this->name, GF_LOG_ERROR,
+                        "Failed to get 'features.bit-rot' from dict for volume "
+                        "%s", volinfo->volname);
+        }
+
+        return ret;
+}
+
+void
+glusterd_get_bitd_rundir (glusterd_volinfo_t *volinfo,
+                           char *path, int path_len)
+{
+        char                    workdir[PATH_MAX]      = {0,};
+        glusterd_conf_t        *priv                   = THIS->private;
+
+        GLUSTERD_GET_VOLUME_DIR (workdir, volinfo, priv);
+
+        snprintf (path, path_len, "%s/run", workdir);
+}
+
+void
+glusterd_get_bitd_volfile (glusterd_volinfo_t *volinfo,
+                            char *path, int path_len)
+{
+        char                    workdir[PATH_MAX]      = {0,};
+        glusterd_conf_t        *priv                   = THIS->private;
+
+        GLUSTERD_GET_VOLUME_DIR (workdir, volinfo, priv);
+
+        snprintf (path, path_len, "%s/%s-bitd.vol", workdir,
+                  volinfo->volname);
+}
+
+void
+glusterd_get_bitd_pidfile (glusterd_volinfo_t *volinfo,
+                            char *path, int path_len)
+{
+        char            rundir[PATH_MAX]      = {0,};
+
+        glusterd_get_bitd_rundir (volinfo, rundir, sizeof (rundir));
+
+        snprintf (path, path_len, "%s/%s-bitd.pid", rundir, volinfo->volname);
+}
+
+void
+glusterd_set_bitd_socket_filepath (glusterd_volinfo_t *volinfo,
+                                    char *path, int path_len)
+{
+        char                    sockfilepath[PATH_MAX] = {0,};
+        char                    rundir[PATH_MAX]       = {0,};
+
+        glusterd_get_bitd_rundir (volinfo, rundir, sizeof (rundir));
+        snprintf (sockfilepath, sizeof (sockfilepath), "%s/run-%s",
+                  rundir, uuid_utoa (MY_UUID));
+
+        glusterd_set_socket_filepath (sockfilepath, path, path_len);
+}
+
+gf_boolean_t
+glusterd_is_bitd_running (glusterd_volinfo_t *volinfo)
+{
+        char                     pidfile[PATH_MAX]     = {0,};
+        int                      pid                   = -1;
+        glusterd_conf_t         *priv                  = THIS->private;
+
+        glusterd_get_bitd_pidfile (volinfo, pidfile,
+                                    sizeof (pidfile));
+
+        return gf_is_service_running (pidfile, &pid);
+}
+
+gf_boolean_t
+glusterd_is_bitd_online (glusterd_volinfo_t *volinfo)
+{
+        return volinfo->bitd.online;
+}
+
+void
+glusterd_bitd_set_online_status (glusterd_volinfo_t *volinfo,
+                                  gf_boolean_t status)
+{
+        volinfo->bitd.online = status;
+}
+
+static inline void
+glusterd_bitd_set_rpc (glusterd_volinfo_t *volinfo, struct rpc_clnt *rpc)
+{
+        volinfo->bitd.rpc = rpc;
+}
+
+int32_t
+glusterd_bitd_connect (glusterd_volinfo_t *volinfo, char *socketpath)
+{
+        int                     ret = 0;
+        dict_t                  *options = NULL;
+        struct rpc_clnt         *rpc = NULL;
+        glusterd_conf_t         *priv = THIS->private;
+
+        rpc = glusterd_bitd_get_rpc (volinfo);
+
+        if (rpc == NULL) {
+                /* Setting frame-timeout to 10mins (600seconds).
+                 * Unix domain sockets ensures that the connection is reliable.
+                 * The default timeout of 30mins used for unreliable network
+                 * connections is too long for unix domain socket connections.
+                 */
+                ret = rpc_transport_unix_options_build (&options, socketpath,
+                                                        600);
+                if (ret)
+                        goto out;
+
+                ret = dict_set_str(options,
+                                   "transport.socket.ignore-enoent", "on");
+                if (ret)
+                        goto out;
+
+                glusterd_volinfo_ref (volinfo);
+
+                synclock_unlock (&priv->big_lock);
+                ret = glusterd_rpc_create (&rpc, options,
+                                           glusterd_snapd_rpc_notify,
+                                           volinfo);
+                synclock_lock (&priv->big_lock);
+                if (ret)
+                        goto out;
+
+                (void) glusterd_bitd_set_rpc (volinfo, rpc);
+        }
+out:
+        return ret;
+}
+
+int32_t
+glusterd_bitd_disconnect (glusterd_volinfo_t *volinfo)
+{
+        struct rpc_clnt         *rpc = NULL;
+        glusterd_conf_t         *priv = THIS->private;
+
+        rpc = glusterd_bitd_get_rpc (volinfo);
+
+        (void) glusterd_bitd_set_rpc (volinfo, NULL);
+
+        if (rpc)
+                glusterd_rpc_clnt_unref (priv, rpc);
+
+        return 0;
+}
+
+int32_t
+glusterd_bitd_start (glusterd_volinfo_t *volinfo, gf_boolean_t wait)
+{
+        int32_t                 ret                        = -1;
+        xlator_t               *this                       = NULL;
+        glusterd_conf_t        *priv                       = NULL;
+        runner_t                runner                     = {0,};
+        char                    pidfile[PATH_MAX]          = {0,};
+        char                    logfile[PATH_MAX]          = {0,};
+        char                    logdir[PATH_MAX]           = {0,};
+        char                    volfile[PATH_MAX]          = {0,};
+        char                    glusterd_uuid[1024]        = {0,};
+        char                    rundir[PATH_MAX]           = {0,};
+        char                    sockfpath[PATH_MAX]        = {0,};
+        char                    volfileid[256]             = {0};
+        char                   *volfileserver              = NULL;
+        char                    valgrind_logfile[PATH_MAX] = {0};
+        int                     bitd_port                 = 0;
+        char                   *volname                    = volinfo->volname;
+        char                    bitd_id[PATH_MAX]         = {0,};
+        char                    msg[1024]                  = {0,};
+
+        this = THIS;
+        GF_ASSERT(this);
+
+        if (glusterd_is_bitd_running (volinfo)) {
+                ret = 0;
+                goto connect;
+        }
+
+        priv = this->private;
+
+        glusterd_get_bitd_rundir (volinfo, rundir, sizeof (rundir));
+        ret = mkdir (rundir, 0777);
+
+        if ((ret == -1) && (EEXIST != errno)) {
+                gf_log (this->name, GF_LOG_ERROR, "Unable to create rundir %s",
+                        rundir);
+                goto out;
+        }
+
+        glusterd_get_bitd_pidfile (volinfo, pidfile, sizeof (pidfile));
+        glusterd_get_bitd_volfile (volinfo, volfile, sizeof (volfile));
+
+        ret = sys_access (volfile, F_OK);
+        if (ret) {
+                gf_log (this->name, GF_LOG_DEBUG,
+                        "snapd Volfile %s is not present", volfile);
+
+                /* If glusterd is down on one of the nodes and during
+                 * that time "USS is enabled" for the first time. After some
+                 * time when the glusterd which was down comes back it tries
+                 * to look for the snapd volfile and it does not find snapd
+                 * volfile and because of this starting of snapd fails.
+                 * Therefore, if volfile is not present then create a fresh
+                 * volfile.
+                 */
+                ret = generate_bitd_volfile (volinfo);
+                if (ret) {
+                        gf_log (this->name, GF_LOG_ERROR, "Couldn't create "
+                                "snapd volfile for volume: %s",
+                                volinfo->volname);
+                        goto out;
+                }
+        }
+
+        snprintf (logdir, PATH_MAX, "%s",
+                  DEFAULT_LOG_FILE_DIRECTORY);
+
+        snprintf (logfile, PATH_MAX, "%s/%s-bitd.log", logdir,
+                  volinfo->volname);
+
+        snprintf (volfileid, sizeof (volfileid), "bitd/%s", volname);
+        glusterd_set_bitd_socket_filepath (volinfo, sockfpath,
+                                            sizeof (sockfpath));
+
+        if (dict_get_str (this->options, "transport.socket.bind-address",
+                          &volfileserver) != 0) {
+                volfileserver = "localhost";
+        }
+
+        runinit (&runner);
+
+        if (priv->valgrind) {
+                snprintf (valgrind_logfile, PATH_MAX, "%s/valgrind-snapd.log",
+                          logdir);
+
+                runner_add_args (&runner, "valgrind", "--leak-check=full",
+                                 "--trace-children=yes", "--track-origins=yes",
+                                 NULL);
+                runner_argprintf (&runner, "--log-file=%s", valgrind_logfile);
+        }
+
+        snprintf (bitd_id, sizeof (bitd_id), "bitd-%s", volname);
+        runner_add_args (&runner, SBIN_DIR"/glusterfsd",
+                         "-s", volfileserver,
+                         "--volfile-id", volfileid,
+                         "-p", pidfile,
+                         "-l", logfile,
+                         "-S", sockfpath, NULL);
+
+
+        snprintf (msg, sizeof (msg),
+                  "Starting the bitd service for volume %s", volname);
+        runner_log (&runner, this->name, GF_LOG_DEBUG, msg);
+
+        if (!wait) {
+                ret = runner_run_nowait (&runner);
+        } else {
+                synclock_unlock (&priv->big_lock);
+                {
+                        ret = runner_run (&runner);
+                }
+                synclock_lock (&priv->big_lock);
+        }
+
+connect:
+        if (ret == 0)
+                glusterd_bitd_connect (volinfo, sockfpath);
+
+out:
+        return ret;
+}
+
+int
+glusterd_bitd_stop (glusterd_volinfo_t *volinfo)
+{
+        char                    pidfile[PATH_MAX]        = {0,};
+        char                    sockfpath[PATH_MAX]      = {0,};
+        glusterd_conf_t        *priv                     = THIS->private;
+        int                     ret                      = 0;
+
+        (void)glusterd_bitd_disconnect (volinfo);
+
+        if (!glusterd_is_bitd_running (volinfo))
+                goto out;
+
+        glusterd_get_bitd_pidfile (volinfo, pidfile, sizeof (pidfile));
+        ret = glusterd_service_stop ("bitd", pidfile, SIGTERM, _gf_true);
+
+        if (ret == 0) {
+                glusterd_set_bitd_socket_filepath (volinfo, sockfpath,
+                                                    sizeof (sockfpath));
+                (void)glusterd_unlink_file (sockfpath);
+        }
+out:
+        return ret;
+}
+
+int
+glusterd_handle_bitd_option (glusterd_volinfo_t *volinfo)
+{
+        int             ret     = 0;
+        xlator_t       *this    = THIS;
+
+        if (volinfo->is_snap_volume)
+                return 0;
+
+        if (!glusterd_is_volume_started (volinfo)) {
+                if (glusterd_is_bitd_running (volinfo)) {
+                        ret = glusterd_bitd_stop (volinfo);
+                        if (ret)
+                                gf_log (this->name, GF_LOG_ERROR,
+                                        "Couldn't stop snapd for "
+                                        "volume: %s",
+                                        volinfo->volname);
+                } else {
+                        /* Since snapd is not running set ret to 0 */
+                        ret = 0;
+                }
+                goto out;
+        }
+
+        ret = glusterd_bitd_start (volinfo, _gf_false);
+        if (ret) {
+                gf_log (this->name, GF_LOG_ERROR, "Couldn't start "
+                        "snapd for volume: %s", volinfo->volname);
+                goto out;
+        }
+
+out:
+        return ret;
 }

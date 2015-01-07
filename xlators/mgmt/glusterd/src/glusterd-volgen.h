@@ -230,10 +230,15 @@ gd_is_xlator_option (char *key);
 gf_boolean_t
 gd_is_boolean_option (char *key);
 
+
 char*
 volgen_get_shd_key (glusterd_volinfo_t *volinfo);
 
 int
 glusterd_volopt_validate (glusterd_volinfo_t *volinfo, dict_t *dict, char *key,
                           char *value, char **op_errstr);
+
+int
+generate_bitd_volfile (glusterd_volinfo_t *volinfo);
+
 #endif

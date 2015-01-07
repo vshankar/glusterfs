@@ -2266,7 +2266,7 @@ glusterd_op_start_volume (dict_t *dict, char **op_errstr)
         if (ret)
                 goto out;
 
-        ret = glusterd_handle_snapd_option (volinfo);
+        ret = glusterd_handle_bitd_option (volinfo);
         if (ret)
                 goto out;
 
