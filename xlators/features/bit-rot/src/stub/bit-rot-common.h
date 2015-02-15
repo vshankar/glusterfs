@@ -18,6 +18,8 @@
 
 #include "glusterfs.h"
 
+#define OPEN_FROM_BITD "open-from-bitd"
+
 /**
  * on-disk formats for ongoing version and object signature.
  */

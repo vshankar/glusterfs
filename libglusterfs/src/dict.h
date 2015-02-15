@@ -255,4 +255,7 @@ dict_dump_to_log (dict_t *dict);
 
 int
 dict_dump_to_str (dict_t *dict, char *dump, int dumpsize, char *format);
+
+dict_t *
+dict_for_key_value (const char *name, const char *value, size_t size);
 #endif

@@ -3024,6 +3024,7 @@ glusterd_spawn_daemons (void *opaque)
         glusterd_restart_gsyncds (conf);
         glusterd_restart_rebalance (conf);
         ret = glusterd_restart_snapds (conf);
+        sleep (1); /* wait for bricks to start properly */
         ret = glusterd_restart_bitds (conf);
 
         return ret;
