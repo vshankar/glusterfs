@@ -131,6 +131,8 @@ enum gf_common_mem_types_ {
         gf_common_mt_rbuf_t               = 115,
         gf_common_mt_rlist_t              = 116,
         gf_common_mt_rvec_t               = 117,
+        gf_common_mt_gf_brick_spec_t      = 118,
+        gf_common_mt_gf_timer_entry_t     = 119, /* timer for the timer wheel */
         gf_common_mt_end
 };
 #endif

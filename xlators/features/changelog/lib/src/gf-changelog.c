@@ -95,7 +95,7 @@ gf_changelog_ctx_defaults_init (glusterfs_ctx_t *ctx)
                 return -1;
 
         ctx->event_pool = event_pool_new (GF_CHANGELOG_EVENT_POOL_SIZE,
-                                          GF_CHANGELOG_EVENT_THREAD_COUNT);
+                                          STARTING_EVENT_THREADS);
         if (!ctx->event_pool)
                 return -1;
 

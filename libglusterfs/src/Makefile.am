@@ -11,6 +11,7 @@ libglusterfs_la_LIBADD = @LEXLIB@ $(ZLIB_LIBS)
 libglusterfs_la_LDFLAGS = -version-info $(LIBGLUSTERFS_LT_VERSION)
 
 lib_LTLIBRARIES = libglusterfs.la
+libgfchangelogdir = $(includedir)/glusterfs/gfchangelog
 
 CONTRIB_BUILDDIR = $(top_builddir)/contrib
 
@@ -51,6 +52,8 @@ noinst_HEADERS = common-utils.h defaults.h dict.h glusterfs.h hashfn.h timespec.
 	$(CONTRIBDIR)/mount/mntent_compat.h lvm-defaults.h \
 	$(CONTRIBDIR)/libexecinfo/execinfo_compat.h rot-buffs.h \
 	$(CONTRIBDIR)/timer-wheel/timer-wheel.h
+
+libgfchangelog_HEADERS = changelog.h
 
 EXTRA_DIST = graph.l graph.y
 
