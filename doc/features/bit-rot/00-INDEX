@@ -1,0 +1,6 @@
+00-INDEX
+        - this file
+bitrot-docs.txt
+        - links to design, spec and feature page
+object-versioning.txt
+        - object versioning mechanism to track object signature

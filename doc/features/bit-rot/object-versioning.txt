@@ -1,0 +1,268 @@
+Object versioning
+=================
+
+  Bitrot detection in GlusterFS relies on object (file) checksum (hash) verification,
+  also known as "object signature". An object is signed when there are no active
+  file desciptors referring to it's inode (i.e., upon last close()). This is just an
+  hint for the initiation of hash calculation (and therefore signing). There is
+  absolutely no control over when clients can initiate modification operations on
+  the object. An object could be under modification while it's hash computation is
+  under progress. It would also be in-appropriate to restrict access to such objects
+  during the time duration of signing.
+
+  Object versioning is used as a mechanism to identify the staleness of an objects
+  signature. The document below does not just list down the version update protocol,
+  but goes through various factors that led to it's design.
+
+NOTE: The word "object" is used to represent a "regular file" and object versions
+      are persisted in extended attributes of the objects inode.
+
+INDEX
+=====
+  i.   Version updation protocol
+  ii.  Correctness guaraantees
+  iii. Implementation
+  iv.  Protocol enhancements
+
+i. Version updation protocol
+============================
+  There are two types of versions associated with an object:
+
+  a) Ongoing version: This version is incremented on every open() but selectively
+     synchronized to disk to avoid overheads due to fsync(). When an object is
+     created, a default ongoing version of one (1) is assigned. An object lookup()
+     too assigns the default version if not present. When a version is initialized
+     upon lookup() or creat() FOP, it need to be durable on disk and therefore
+     can just be a extended attrbute set with out an expensive fsync() syscall.
+
+  b) Signing version: This is the version against which an object is deemed to be
+     signed. An objects signature is tied to a particular signed version. Since,
+     an object is a candidate for signing upon last release() [last close()],
+     signing version is the "ongoing version" at that point of time [though the
+     mechanism used to used to choose the version is a bit different that just
+     picking up the ongoing version at the time of last release()].
+
+  An objects signature is trustable when the version it was signed against
+  matches the ongoing version, i.e., if you had calculated the hash by hand
+  and matched it with the object signature, it *should* be a perfect match
+  if the versions are equal. On the other hand, the signature is considered
+  stale (might or might not match the hash just calculated).
+
+  Initialization of object versions
+  ---------------------------------
+     An object that existed before the pre versioning days, is assigned the
+     default versions upon lookup(). The protocol at this point expects "no"
+     durability guarantess of the versions, i.e., extended attribute sets
+     need not be followed by an explicit filesystem sync (fsync()). In case
+     of a power outage or a crash, versions are re-initialized with defaults
+     if found to be non-existant. Similar to lookup(), there need not be
+     durability guarantees at this point. The signing version is initialized
+     with a value of zero (0) and the ongoing version as one (1).
+     [
+       NOTE: If an objects already has versions on-disk, lookup() just brings
+             the versions in memory. In this case both versions may or may
+             not match depending on state the object was left in.
+     ]
+
+
+  Increment of object versions
+  ----------------------------
+     During initial versioning, the in-memory representation of the object is
+     marked dirty, so that subsequent modification operations on the object
+     triggers a versiong synchronization to disk (extended attribute set).
+     Not all modification operations needs to synchronize the version to
+     disk, only the first operation need to perform the synchronization.
+     Moreover, this operation needs to be durable on disk, for the protocol
+     to be crash consistent. Let's picturize below the various version
+     states after subsequent opens.
+
+
+                       lookup()     open()    open()    open()
+            ===========================================================
+
+            OV(m):        1*          2         3         4
+                      -----------------------------------------
+            OV(d):        1           2[s]      2         2
+            SV(d):        0           0         0         0
+
+
+     Let's now picturize the state when an already signed object undergoes
+     file operations.
+
+     on-disk state:
+          OV(d): 3
+          SV(d): 3|<signature>
+
+
+                       lookup()     open()    open()    open()
+            ===========================================================
+
+            OV(m):        3*          4         5         6
+                      -----------------------------------------
+            OV(d):        3           4[s]      4         4
+            SV(d):        3           3         3         3
+
+     As shown above, the first open (marked as [s]) needs to make sure that
+     the new on-disk version is durable. This is also shown as (*) marked
+     in the ongoing version.
+
+  Signing process
+  ---------------
+     As per the above example, when the last open file descriptor is closed,
+     signing needs to be performed. The protocol restricts that the signing
+     needs to be attached to a version, which in this case is the in-memory
+     value of the ongoing version. A release() also marks the inode dirty,
+     therefore, the next open() does a durable version synchronization to
+     disk.
+
+                       close()     release()  open()   open()
+            ===========================================================
+
+            OV(m):        6           6*        7         8
+                      -----------------------------------------
+            OV(d):        4           4         7[s]      7
+            SV(d):        3           3         3         3
+
+     As shown above, a relase() call triggers a signing with signing version
+     as OV(m): which is 6. Now, during signing, the object is signed with
+     a signature attached to verion 6 as shown below (continuing with the
+     last open() call from above):
+
+                       open()      sign(6, signature)
+            ===========================================================
+
+            OV(m):        8               8
+                      -----------------------------------------
+            OV(d):        7               7
+            SV(d):        3               6[s]
+
+     Now, consider what happens when there are no subsequent open() calls
+     after last close(), followed by a signing and a crash.
+
+     on-disk state:
+          OV(d): 3
+          SV(d): 3|<signature>
+
+
+                       lookup()     open()    open()   release()
+            ===========================================================
+
+            OV(m):        3*          4         5         5*
+                      -------------------------------------------
+            OV(d):        3           4[s]      4         4
+            SV(d):        3           3         3         3
+
+     sign and crash.
+
+                        sign(5, signature)
+            ==========================================
+
+            OV(m):             5*
+                      -----------------------   CRASH
+            OV(d):             4
+            SV(d):             5[s]
+
+     After recovery:
+
+                            lookup()        open()
+            =================================================
+
+            OV(m):             4*             5
+                      ----------------------------------------
+            OV(d):             4              5[s]
+            SV(d):             5              5
+
+     After recovering from a crash or a hard reboot, the version state
+     is shown above. Now an open() call would synchronize the new version
+     to disk and thereby matching the signed version which is disasterous
+     as the object has an active file descriptor and possibly undergoing
+     I/O operations. Validating the signature would result in incorrectly
+     identifying the file as corrupt.
+
+     To counter this issue, the protocol enforces either of the below
+     mentioned changes:
+
+        * Signing should trigger a durable synchronization of the ongoing
+          version to disk (plus mark the in-memory inode dirty)
+        * During lookup(), the in-memory ongoing version should be the
+          maximum of the on-disk ongoing version and signed version
+
+ii. Correctness Guarantees
+==========================
+
+     It's worth mentioning couple of cases when the protocol has to deal
+     with concurrent operations racing with each other for versions.
+
+     Concurrent open()'s
+     -------------------
+     When an inode is dirty (i.e., the very next operations would try to
+     synchronize the version to disk), there can be multiple calls [say,
+     open()] that would find the inode state as dirty and try to writeback
+     the version to disk. Also, note that, marking the inode as synced
+     and updating the in-memory version is done *after* the new version
+     is written on disk. This is done to avoid incorrect version stored
+     on-disk in case the version synchronization fails (but the in-memory
+     version still holding the updated value).
+     Coming back to multiple open() calls on an object, if each operation
+     blindly stored the version it just synchronized to disk, depending
+     on the order in which the operation finishes, the in-memory ongoing
+     version could be lesser than the on-disk value as shown below:
+
+     on-disk state:
+          OV(d): 3
+          SV(d): 3|<signature>
+
+
+                       lookup()     open()    open()
+            =========================================================
+
+            OV(m):        3*          3*        3*      ->   4
+                      --------------------------------------------
+            OV(d):        3           4[s]      5[s]    ->   5
+            SV(d):        3           3         3       ->   3
+
+     Now, on a release() the object is signed with version 4. Although
+     the signature is stale (as it does not match the ongoing version),
+     the signature is actually trustable. This is not such a serious
+     as subsequent operation on the object would possibly correct this
+     anomaly.
+
+     [
+        NOTE: From above, state 4/4 and 5/4 (after open()) are harmless
+              and does not lead to the anomaly mentioned above.
+     ]
+
+     open()/release() race
+     ---------------------
+     This race can cause a release() [on last close()] to pick up the
+     ongoing version which was just incremented on fresh open(). This
+     leads to signing of the object with the same version as the
+     ongoing version, thereby, mismatching signatures when calculated.
+     Another point that's worth mentioning here is that the open
+     file descriptor is *attached* to it's inode *after* it's done
+     version synchronization (and increment). Hence, if a release()
+     sneaks in this window, the file desriptor list for the given
+     inode is still empty, therefore release() considering it as a
+     last close().
+     To counter this, the protocol introduces another version variable
+     called releaseversion. This version is refreshed with the current
+     value of ongoing version (in-memory) upon flush(). The point of
+     doing this in flush() is that a flush() is guarantted before
+     release(). If a release() sneaks in between open() incrementing
+     the ongoing version and the file desciptor getting attached to
+     the inode, *releaseversion* correctly holds the value of the
+     last ongoing version.
+
+
+iii. Implementation
+===================
+     There are some minor changes to the versioning protocol which
+     is implemented in GlusterFS. It needs to be detailed here.
+     For now refer to: xlators/feature/bit-rot/stc/stub for code.
+
+iv. Protocol enhancements
+=========================
+
+     a) Delaying persisting on-disk versions till open()
+     b) Protocol changes required to handle anonymous file
+        descriptors in GlusterFS.
